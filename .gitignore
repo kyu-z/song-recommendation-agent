@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+
+chroma_db/
+*.pth
+*.npz
+
+my_songs/
+dataset/
+
+venv/
+.env
+
+*.png
