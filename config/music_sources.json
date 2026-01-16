@@ -1,0 +1,126 @@
+{
+  "search_terms": {
+    "electronic": ["electronic music", "EDM", "techno", "house music", "electronic dance"],
+    "rock": ["rock music", "rock band", "guitar rock", "indie rock", "alternative rock"],
+    "pop": ["pop music", "pop song", "mainstream pop", "catchy pop", "radio pop"],
+    "jazz": ["jazz music", "jazz instrumental", "smooth jazz", "jazz piano", "jazz fusion"],
+    "classical": ["classical music", "orchestral", "symphony", "piano classical", "baroque"],
+    "hip-hop": ["hip hop", "rap music", "hip-hop beat", "rap instrumental", "urban music"],
+    "r&b": ["R&B music", "rhythm and blues", "soul music", "neo soul", "contemporary R&B"],
+    "folk": ["folk music", "acoustic folk", "indie folk", "traditional folk", "folk song"],
+    "country": ["country music", "country song", "acoustic country", "folk country", "americana"],
+    "reggae": ["reggae music", "jamaican reggae", "roots reggae", "reggae rhythm", "dub reggae"],
+    "blues": ["blues music", "blues guitar", "electric blues", "delta blues", "chicago blues"],
+    "funk": ["funk music", "funk bass", "groove funk", "disco funk", "funky beat"],
+    "metal": ["metal music", "heavy metal", "metal guitar", "rock metal", "alternative metal"],
+    "ambient": ["ambient music", "atmospheric", "soundscape", "drone ambient", "dark ambient"],
+    "experimental": ["experimental music", "avant-garde", "noise music", "sound art", "abstract music"],
+    "world": ["world music", "ethnic music", "traditional music", "cultural music", "folk traditional"],
+    "hyperpop": ["hyperpop", "hyper pop", "pc music", "digicore", "experimental pop", "glitchy pop"],
+    "phonk": ["phonk", "memphis rap", "drift phonk", "cowbell phonk", "dark phonk", "aggressive phonk"],
+    "vaporwave": ["vaporwave", "vapor wave", "synthwave", "retro wave", "aesthetic music", "lo-fi vaporwave"],
+    "cyberpunk": ["cyberpunk", "cyber punk", "futuristic", "dystopian music", "industrial electronic", "dark synth"],
+    "chillwave": ["chillwave", "chill wave", "dreamy electronic", "nostalgic synth", "ambient pop", "indie electronic"],
+    "future-bass": ["future bass", "future-bass", "melodic dubstep", "chill trap", "emotional electronic", "atmospheric bass"],
+    "k-pop": ["k-pop", "korean pop", "kpop", "korean music", "idol music", "korean idol"],
+    "j-rock": ["j-rock", "japanese rock", "jrock", "visual kei", "japanese metal", "anime rock"],
+    "j-pop": ["j-pop", "japanese pop", "jpop", "city pop", "shibuya-kei", "japanese idol", "j-pop instrumental"],
+    "anime": ["anime song", "anisong", "anime soundtrack", "anime opening", "anime ending", "anime music", "vocaloid"],
+    "city-pop": ["city pop", "japanese city pop", "80s japanese pop", "retro japanese pop", "funk japanese pop"],
+    "vocaloid": ["vocaloid", "hatsune miku", "vocaloid producer", "vocaloid instrumental", "project diva type music"]
+  },
+  "youtube_audio_library": {
+    "enabled": true,
+    "max_downloads": 20,
+    "genres": ["ambient", "hyperpop", "phonk", "vaporwave", "k-pop", "afrobeats", 
+               "drum and bass", "house", "future bass", "cyberpunk", "glitch", 
+               "lo-fi", "synthwave", "j-rock",  "j-pop", "anime", "chillwave", "electronic", "instrumental"],
+    "youtube_search_terms": {
+      "ambient": ["ambient music", "royalty free ambient", "creative commons ambient"],
+      "hyperpop": ["hyperpop", "royalty free hyperpop", "creative commons hyperpop", "pc music"],
+      "phonk": ["phonk music", "royalty free phonk", "creative commons phonk", "memphis phonk"],
+      "vaporwave": ["vaporwave", "royalty free vaporwave", "creative commons vaporwave", "synthwave"],
+      "k-pop": ["k-pop instrumental", "royalty free kpop", "creative commons k-pop"],
+      "j-pop": ["j-pop", "royalty free japanese pop"],
+      "afrobeats": ["afrobeats", "royalty free afrobeats", "creative commons afrobeats"],
+      "drum and bass": ["drum and bass", "royalty free dnb", "creative commons drum bass"],
+      "house": ["house music", "royalty free house", "creative commons house"],
+      "future bass": ["future bass", "royalty free future bass", "creative commons future bass"],
+      "cyberpunk": ["cyberpunk music", "royalty free cyberpunk", "creative commons cyberpunk"],
+      "glitch": ["glitch music", "royalty free glitch", "creative commons glitch"],
+      "lo-fi": ["lo-fi music", "royalty free lofi", "creative commons lo-fi"],
+      "synthwave": ["synthwave", "royalty free synthwave", "creative commons synthwave"],
+      "j-rock": ["j-rock", "royalty free j-rock", "creative commons japanese rock"],
+      "chillwave": ["chillwave", "royalty free chillwave", "creative commons chillwave"],
+      "electronic": ["electronic music", "royalty free electronic", "creative commons electronic 3 minutes"],
+      "techno": ["dark techno", "industrial techno royalty free", "berlin techno creative commons", "techno instrumental track"],
+      "instrumental": ["instrumental music", "royalty free instrumental"],
+      "shoegaze": ["Modern Shoegaze", "Dream Pop", "Slowdive style"]
+    },
+    "filters": {
+      "duration_min": 60,
+      "duration_max": 600,
+      "exclude_terms": ["remix", "cover", "karaoke", "lyrics", "explanation", "digital studios", "what is", "how to", "off book", "pbs"]
+    }
+  },
+  "jamendo": {
+    "enabled": true,
+    "api_key": "ENV:JAMENDO_CLIENT_ID",
+    "max_downloads": 15,
+    "genres": ["electronic", "instrumental", "ambient", "chillout", "soundtrack",
+               "hyperpop", "phonk", "vaporwave", "synthwave", "chillwave", "glitch",
+               "cyberpunk", "house", "drum-and-bass", "future-bass", "afrobeats",
+               "k-pop", "j-rock", "j-pop","anime","experimental", "downtempo", "electronica"],
+    "api_url": "https://api.jamendo.com/v3.0/tracks/",
+    "register_url": "https://developer.jamendo.com/"
+  },
+  "archive_org": {
+    "enabled": false,
+    "max_downloads": 10,
+    "collections": [
+      "opensource_audio",
+      "netlabels",
+      "freemusicarchive"
+    ],
+    "api_url": "https://archive.org/advancedsearch.php"
+  },
+  "ccmixter": {
+    "enabled": false,
+    "max_downloads": 5,
+    "api_url": "http://ccmixter.org/api/",
+    "note": "Creative Commons remixes and original tracks"
+  },
+  "download_settings": {
+    "format": "mp3",
+    "quality": "192",
+    "max_duration": 600,
+    "min_duration": 30,
+    "rate_limit_delay": [1, 3],
+    "retry_attempts": 3,
+    "timeout": 30
+  },
+  "gtzan_avoidance": {
+    "blocked_genres": [
+      "blues", "classical", "country", "disco", "hiphop",
+      "jazz", "metal", "pop", "reggae", "rock"
+    ],
+    "blocked_aliases": {
+      "hip-hop": "hiphop",
+      "hip hop": "hiphop",
+      "classical music": "classical",
+      "country music": "country",
+      "pop music": "pop",
+      "rock music": "rock",
+      "jazz music": "jazz",
+      "blues music": "blues",
+      "heavy metal": "metal",
+      "death metal": "metal",
+      "reggae music": "reggae"
+    },
+    "allowed_subgenres": {
+      "electronic": ["ambient", "idm", "techno", "house", "downtempo"],
+      "instrumental": ["post-rock", "neoclassical", "film score"],
+      "experimental": ["noise", "drone", "soundscape"]
+    }
+  }
+}

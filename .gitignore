@@ -1,14 +1,30 @@
+# Environment variables (IMPORTANT: Never commit API keys!)
+.env
+
+# Python
 __pycache__/
 *.py[cod]
 
+# ChromaDB and model files
 chroma_db/
 *.pth
 *.npz
 
+# Music files
 my_songs/
+expanded_music/
+demo_expanded_music/
 dataset/
 
+# IDE and OS
+.vscode/
+.DS_Store
+
 venv/
-.env
+.env.local
 
 *.png
+
+.DS_Store
+
+/doc/

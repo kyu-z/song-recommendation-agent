@@ -202,6 +202,81 @@ class MusicVectorStore:
             "is_empty": count == 0
         }
     
+    import numpy as np
+
+    def get_gtzan_centroid(self, genre_name):
+        """
+        Calculates the mean vector (centroid) for a specific GTZAN genre 
+        to use as an acoustic baseline.
+        """
+        try:
+            # 1. Query the collection for tracks belonging to the specified GTZAN genre
+            # Note: We filter by 'source' to ensure we only use original GTZAN data
+            results = self.collection.get(
+                where={
+                    "$and": [
+                        {"genre": genre_name},
+                        {"source": "gtzan"} 
+                    ]
+                },
+                include=["embeddings"]
+            )
+
+            # 2. Check if we found any matching vectors
+            if results is None or 'embeddings' not in results or len(results['embeddings']) == 0:
+                print(f"⚠️  No GTZAN reference data found for genre: {genre_name}")
+                return None
+
+            # 3. Convert list of embeddings to a numpy array for mathematical operations
+            embeddings_array = np.array(results['embeddings'])
+            
+            # 4. Calculate the mean along the first axis (average of all vectors)
+            # This creates a single 'representative' vector for the entire genre
+            centroid = np.mean(embeddings_array, axis=0)
+            
+            return centroid
+
+        except Exception as e:
+            # Log error if the query or calculation fails
+            print(f"Error calculating centroid: {e}")
+            return None
+        
+    def get_all_songs(self) -> List[Dict]:
+        """
+        Get all songs in the collection
+        
+        Returns:
+            List of all songs with their metadata
+        """
+        try:
+                if self.collection is None:
+                    return []
+                
+                # Get all results without filtering
+                results = self.collection.get(
+                    include=['metadatas', 'documents', 'embeddings']
+                )
+                
+                if not results or not results.get('metadatas'):
+                    return []
+                
+                songs = []
+                metadatas = results['metadatas']
+                ids = results['ids']
+                
+                for i, metadata in enumerate(metadatas):
+                    song_info = {
+                        'id': ids[i] if ids else f"song_{i}",
+                        'metadata': metadata or {}
+                    }
+                    songs.append(song_info)
+                
+                return songs
+                
+        except Exception as e:
+            print(f"Failed to get all songs: {e}")
+            return []
+    
     def delete_collection(self):
         """Delete entire collection (dangerous operation)"""
         try:
