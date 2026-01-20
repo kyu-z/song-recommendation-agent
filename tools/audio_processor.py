@@ -108,12 +108,13 @@ class AudioFeatureExtractor:
         except Exception as e:
             raise RuntimeError(f"Failed to extract features from {audio_path}: {str(e)}")
     
-    def extract_with_metadata(self, audio_path: str) -> Dict:
+    def extract_with_metadata(self, audio_path: str, source: str = "my_library") -> Dict:
         """
         Extract features along with metadata
         
         Args:
             audio_path: Path to the audio file
+            source: Data source identifier (default: "my_library")
             
         Returns:
             Dict: Contains embedding and metadata
@@ -141,7 +142,8 @@ class AudioFeatureExtractor:
             "format": file_ext,
             "sample_rate": self.sample_rate,
             "processed_duration": self.duration,
-            "actual_duration": actual_duration
+            "actual_duration": actual_duration,
+            "source": source  # 🔧 添加source字段
         }
         
         return {
@@ -149,20 +151,23 @@ class AudioFeatureExtractor:
             "metadata": metadata
         }
     
-    def extract_and_save(self, audio_path: str, vector_store: Optional[MusicVectorStore] = None) -> bool:
+    def extract_and_save(self, audio_path: str, 
+                        vector_store: Optional[MusicVectorStore] = None,
+                        source: str = "my_library") -> bool:
         """
         Extract features and directly save to ChromaDB
         
         Args:
             audio_path: Path to the audio file
             vector_store: MusicVectorStore instance (creates new if None)
+            source: Data source identifier (default: "my_library")
             
         Returns:
             bool: Success status
         """
         try:
             # Extract features with metadata
-            result = self.extract_with_metadata(audio_path)
+            result = self.extract_with_metadata(audio_path, source=source)
             
             # Use provided vector store or create new one
             if vector_store is None:
@@ -178,7 +183,7 @@ class AudioFeatureExtractor:
             success = vector_store.add_song(result["embedding"], result["metadata"])
             
             if success:
-                print(f"✅ Saved: {result['metadata']['filename']}")
+                print(f"✅ Saved: {result['metadata']['filename']} (source: {source})")
             else:
                 print(f"❌ Failed to save: {result['metadata']['filename']}")
             
@@ -190,7 +195,8 @@ class AudioFeatureExtractor:
     
     def extract_batch(self, audio_dir: str, 
                      supported_formats: tuple = ('.mp3', '.wav', '.m4a', '.flac'),
-                     save_to_db: bool = True) -> List[Dict]:
+                     save_to_db: bool = True,
+                     source: str = "my_library") -> List[Dict]:
         """
         Extract features from all audio files in a directory
         
@@ -198,11 +204,13 @@ class AudioFeatureExtractor:
             audio_dir: Directory containing audio files
             supported_formats: Tuple of supported audio file extensions
             save_to_db: Whether to save to ChromaDB automatically
+            source: Data source identifier (default: "my_library")
             
         Returns:
             List[Dict]: List of extraction results
         """
         print(f"🚀 Starting batch extraction from: {audio_dir}")
+        print(f"📋 Source identifier: {source}")
         
         # Find all audio files
         audio_files = []
@@ -231,21 +239,21 @@ class AudioFeatureExtractor:
             
             try:
                 if save_to_db:
-                    # Extract and save to database
-                    success = self.extract_and_save(file_path, vector_store)
+                    # Extract and save to database with source
+                    success = self.extract_and_save(file_path, vector_store, source=source)
                     if success:
                         successful += 1
                         # Still get the result for return value
-                        result = self.extract_with_metadata(file_path)
+                        result = self.extract_with_metadata(file_path, source=source)
                         results.append(result)
                     else:
                         failed += 1
                 else:
                     # Just extract features
-                    result = self.extract_with_metadata(file_path)
+                    result = self.extract_with_metadata(file_path, source=source)
                     results.append(result)
                     successful += 1
-                    print(f"✅ Extracted: {file}")
+                    print(f"✅ Extracted: {file} (source: {source})")
                     
             except Exception as e:
                 print(f"❌ Failed: {file} - {str(e)}")
@@ -255,6 +263,7 @@ class AudioFeatureExtractor:
         print(f"\n🎉 Batch extraction completed!")
         print(f"   ✅ Successful: {successful}")
         print(f"   ❌ Failed: {failed}")
+        print(f"   📋 Source: {source}")
         if save_to_db:
             print(f"   💾 Saved to ChromaDB: {successful}")
         
@@ -305,7 +314,7 @@ if __name__ == "__main__":
                 print(f"   Embedding type: {type(embedding)}")
                 
                 # Extract with metadata
-                result = extractor.extract_with_metadata(demo_file)
+                result = extractor.extract_with_metadata(demo_file, source="demo")
                 print(f"   Metadata keys: {list(result['metadata'].keys())}")
         
         print(f"\n✅ Demo completed successfully!")

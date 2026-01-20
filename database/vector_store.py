@@ -89,16 +89,19 @@ class MusicVectorStore:
             print(f"❌ Migration failed: {str(e)}")
             return False
     
-    def search_similar(self, query_embedding: np.ndarray, n_results: int = 5, include_self: bool = False) -> List[Dict]:
+    def search_similar(self, query_embedding: np.ndarray, n_results: int = 5, 
+                      include_self: bool = False, where_metadata: Dict = None) -> List[Dict]:
         """
-        Search for similar music
+        Search for similar music with optional metadata filtering
         
         Args:
             query_embedding: Query vector
             n_results: Number of results to return
+            include_self: Whether to include the query song itself
+            where_metadata: Optional metadata filters (e.g., {"vocal_type": "instrumental"})
             
         Returns:
-            List[Dict]: List of similar songs
+            List[Dict]: List of similar songs matching criteria
         """
         try:
             # Ensure input is in correct format
@@ -107,11 +110,21 @@ class MusicVectorStore:
             
             actual_n = n_results if include_self else n_results + 1
 
+            # Prepare query parameters
+            query_params = {
+                "query_embeddings": [query_embedding],
+                "n_results": actual_n
+            }
+            
+            # Add metadata filtering if provided
+            if where_metadata:
+                # Ensure we exclude GTZAN data by default
+                if "source" not in where_metadata:
+                    where_metadata = {"$and": [where_metadata, {"source": {"$ne": "gtzan"}}]}
+                query_params["where"] = where_metadata
+
             # Execute similarity search
-            results = self.collection.query(
-                query_embeddings=[query_embedding],
-                n_results=actual_n
-            )
+            results = self.collection.query(**query_params)
             
             # Format return results
             similar_songs = []
@@ -124,10 +137,16 @@ class MusicVectorStore:
 
                 similar_songs.append({
                     'id': results['ids'][0][i],
-                    'filename': results['metadatas'][0][i]['filename'],
-                    'full_path': results['metadatas'][0][i]['full_path'],
-                    'title': results['metadatas'][0][i]['title'],
-                    'distance': results['distances'][0][i]
+                    'filename': results['metadatas'][0][i].get('filename', 'Unknown'),
+                    'full_path': results['metadatas'][0][i].get('full_path', ''),
+                    'title': results['metadatas'][0][i].get('title', 'Unknown'),
+                    'artist': results['metadatas'][0][i].get('artist', 'Unknown'),
+                    'genre': results['metadatas'][0][i].get('genre', 'Unknown'),
+                    'vocal_type': results['metadatas'][0][i].get('vocalinstrumental', 'unknown'),
+                    'tags': results['metadatas'][0][i].get('tags', ''),
+                    'speed': results['metadatas'][0][i].get('speed', 'unknown'),
+                    'distance': results['distances'][0][i],
+                    'metadata': results['metadatas'][0][i]
                 })
             
             return similar_songs
@@ -136,6 +155,174 @@ class MusicVectorStore:
             print(f"Search failed: {str(e)}")
             return []
     
+    def search_by_metadata(self, criteria: Dict[str, Any], limit: int = 15) -> List[Dict]:
+        """
+        Pure semantic search based on metadata only (no vector similarity)
+        
+        Args:
+            criteria: Search criteria dict, e.g., {"vocal_type": "instrumental", "speed": "medium"}
+            limit: Maximum number of results
+            
+        Returns:
+            List of songs matching metadata criteria (excludes GTZAN by default)
+        """
+        try:
+            # Always exclude GTZAN training data unless explicitly included
+            if "source" not in criteria:
+                where_filter = {"$and": [criteria, {"source": {"$ne": "gtzan"}}]}
+            else:
+                where_filter = criteria
+            
+            results = self.collection.get(
+                where=where_filter,
+                include=['metadatas'],
+                limit=limit
+            )
+            
+            if not results or not results.get('metadatas'):
+                return []
+            
+            formatted_results = []
+            for i, metadata in enumerate(results['metadatas']):
+                formatted_results.append({
+                    'id': results['ids'][i],
+                    'title': metadata.get('title', 'Unknown'),
+                    'artist': metadata.get('artist', 'Unknown'),
+                    'genre': metadata.get('genre', 'Unknown'),
+                    'vocal_type': metadata.get('vocalinstrumental', 'unknown'),
+                    'tags': metadata.get('tags', '').split(',') if metadata.get('tags') else [],
+                    'speed': metadata.get('speed', 'unknown'),
+                    'source': metadata.get('source', 'unknown'),
+                    'album_name': metadata.get('album_name', 'Unknown'),
+                    'metadata': metadata
+                })
+            
+            return formatted_results
+            
+        except Exception as e:
+            print(f"Metadata search failed: {e}")
+            return []
+
+    def search_by_tags(self, tag_query: str, limit: int = 15) -> List[Dict]:
+        """
+        Search songs by tags using partial string matching
+        
+        Args:
+            tag_query: Tag to search for (e.g., "chill", "beach", "electronic")
+            limit: Maximum number of results
+            
+        Returns:
+            List of songs with matching tags (excludes GTZAN by default)
+        """
+        try:
+            # Get all non-GTZAN songs
+            results = self.collection.get(
+                where={"source": {"$ne": "gtzan"}},
+                include=['metadatas'],
+                limit=1000  # Get more to filter properly
+            )
+            
+            if not results or not results.get('metadatas'):
+                return []
+            
+            # Filter by tag content
+            matched_songs = []
+            tag_query_lower = tag_query.lower()
+            
+            for i, metadata in enumerate(results['metadatas']):
+                tags_str = metadata.get('tags', '').lower()
+                if tag_query_lower in tags_str:
+                    matched_songs.append({
+                        'id': results['ids'][i],
+                        'title': metadata.get('title', 'Unknown'),
+                        'artist': metadata.get('artist', 'Unknown'),
+                        'genre': metadata.get('genre', 'Unknown'),
+                        'vocal_type': metadata.get('vocalinstrumental', 'unknown'),
+                        'tags': metadata.get('tags', '').split(',') if metadata.get('tags') else [],
+                        'speed': metadata.get('speed', 'unknown'),
+                        'source': metadata.get('source', 'unknown'),
+                        'metadata': metadata
+                    })
+                    
+                    if len(matched_songs) >= limit:
+                        break
+            
+            return matched_songs
+            
+        except Exception as e:
+            print(f"Tag search failed: {e}")
+            return []
+
+    def hybrid_search(self, query_embedding: np.ndarray = None, metadata_criteria: Dict = None, 
+                     tag_query: str = None, limit: int = 15, balance_ratio: float = 0.5) -> List[Dict]:
+        """
+        Hybrid search combining semantic (metadata) and acoustic (vector) similarity
+        
+        Args:
+            query_embedding: Optional vector for acoustic similarity
+            metadata_criteria: Optional metadata filters
+            tag_query: Optional tag search string
+            limit: Maximum number of results
+            balance_ratio: How to balance results (0.5 = equal weight)
+            
+        Returns:
+            List of songs combining semantic and acoustic matches
+        """
+        try:
+            all_results = []
+            
+            # 1. Acoustic similarity search (if embedding provided)
+            if query_embedding is not None:
+                acoustic_results = self.search_similar(
+                    query_embedding, 
+                    n_results=max(1, int(limit * balance_ratio * 2)),
+                    where_metadata=metadata_criteria
+                )
+                for result in acoustic_results:
+                    result['match_type'] = 'acoustic'
+                    result['score'] = 1.0 - result['distance']  # Convert distance to similarity
+                all_results.extend(acoustic_results)
+            
+            # 2. Semantic metadata search
+            if metadata_criteria:
+                semantic_results = self.search_by_metadata(
+                    metadata_criteria, 
+                    limit=max(1, int(limit * (1 - balance_ratio) * 2))
+                )
+                for result in semantic_results:
+                    result['match_type'] = 'semantic'
+                    result['score'] = 1.0  # Full semantic match
+                all_results.extend(semantic_results)
+            
+            # 3. Tag-based search
+            if tag_query:
+                tag_results = self.search_by_tags(
+                    tag_query,
+                    limit=max(1, int(limit * (1 - balance_ratio)))
+                )
+                for result in tag_results:
+                    result['match_type'] = 'tags'
+                    result['score'] = 0.8  # High but not perfect score
+                all_results.extend(tag_results)
+            
+            # 4. Deduplicate and rank results
+            seen_ids = set()
+            unique_results = []
+            
+            for result in all_results:
+                if result['id'] not in seen_ids:
+                    seen_ids.add(result['id'])
+                    unique_results.append(result)
+            
+            # Sort by score (highest first)
+            unique_results.sort(key=lambda x: x.get('score', 0), reverse=True)
+            
+            return unique_results[:limit]
+            
+        except Exception as e:
+            print(f"Hybrid search failed: {e}")
+            return []
+
     def song_exists(self, full_path: str) -> bool:
         """
         Check if a song with the given full path already exists
@@ -164,11 +351,11 @@ class MusicVectorStore:
     
     def add_song(self, embedding: np.ndarray, metadata: Dict[str, Any], song_id: str = None) -> bool:
         """
-        Add a single song
+        Add a single song with enhanced metadata support
         
         Args:
             embedding: Song feature vector
-            metadata: Metadata
+            metadata: Enhanced metadata including Jamendo fields
             song_id: Song ID, auto-generated if not provided
             
         Returns:
@@ -178,9 +365,20 @@ class MusicVectorStore:
             if song_id is None:
                 song_id = f"song_{self.collection.count():04d}"
             
+            # Ensure all metadata values are compatible with ChromaDB
+            processed_metadata = {}
+            for key, value in metadata.items():
+                if value is None:
+                    processed_metadata[key] = ""
+                elif isinstance(value, (list, tuple)):
+                    # Convert lists to comma-separated strings
+                    processed_metadata[key] = ",".join(str(v) for v in value if v)
+                else:
+                    processed_metadata[key] = str(value)
+            
             self.collection.add(
                 embeddings=[embedding.flatten().tolist()],
-                metadatas=[metadata],
+                metadatas=[processed_metadata],
                 ids=[song_id]
             )
             return True
@@ -277,6 +475,93 @@ class MusicVectorStore:
             print(f"Failed to get all songs: {e}")
             return []
     
+    def get_genres_pool(self) -> List[str]:
+        """
+        Get all unique genres available in the database (excluding GTZAN training data)
+        
+        Returns:
+            List of unique genres from user library only
+        """
+        try:
+            # Only get genres from non-GTZAN sources
+            results = self.collection.get(
+                where={"source": {"$ne": "gtzan"}},  # Exclude GTZAN data
+                include=['metadatas']
+            )
+            if not results or not results.get('metadatas'):
+                return []
+            
+            genres = set()
+            for metadata in results['metadatas']:
+                genre = metadata.get('genre')
+                if genre:
+                    genres.add(genre.lower().strip())
+            
+            return sorted(list(genres))
+            
+        except Exception as e:
+            print(f"Failed to get genres pool: {e}")
+            return []
+    
+    def search_by_genre_enhanced(self, genre: str, limit: int = 15, 
+                               include_similar: bool = False) -> List[Dict]:
+        """
+        Enhanced genre-based search with optional similarity expansion (excluding GTZAN training data)
+        
+        Args:
+            genre: Target genre
+            limit: Maximum results
+            include_similar: Whether to include similar genres if exact matches are low
+            
+        Returns:
+            List of matching songs from user library only
+        """
+        try:
+            # First try exact genre match, excluding GTZAN data
+            results = self.collection.get(
+                where={
+                    "$and": [
+                        {"genre": genre.lower()},
+                        {"source": {"$ne": "gtzan"}}  # Exclude GTZAN training data
+                    ]
+                },
+                include=['metadatas', 'embeddings'],
+                limit=limit
+            )
+            
+            songs = []
+            if results and results.get('metadatas'):
+                for i, metadata in enumerate(results['metadatas']):
+                    songs.append({
+                        'metadata': metadata,
+                        'embedding': results['embeddings'][i] if results.get('embeddings') else None,
+                        'match_type': 'exact'
+                    })
+            
+            # If we don't have enough results and include_similar is True
+            if len(songs) < limit // 2 and include_similar:
+                # Look for partial matches or related genres, still excluding GTZAN
+                all_results = self.collection.get(
+                    where={"source": {"$ne": "gtzan"}},  # Exclude GTZAN data
+                    include=['metadatas']
+                )
+                for metadata in all_results.get('metadatas', []):
+                    song_genre = metadata.get('genre', '').lower()
+                    if genre.lower() in song_genre or song_genre in genre.lower():
+                        if len(songs) >= limit:
+                            break
+                        songs.append({
+                            'metadata': metadata,
+                            'embedding': None,
+                            'match_type': 'similar'
+                        })
+            
+            return songs[:limit]
+            
+        except Exception as e:
+            print(f"Enhanced genre search failed: {e}")
+            return []
+
     def delete_collection(self):
         """Delete entire collection (dangerous operation)"""
         try:

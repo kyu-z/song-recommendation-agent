@@ -55,7 +55,7 @@
       "electronic": ["electronic music", "royalty free electronic", "creative commons electronic 3 minutes"],
       "techno": ["dark techno", "industrial techno royalty free", "berlin techno creative commons", "techno instrumental track"],
       "instrumental": ["instrumental music", "royalty free instrumental"],
-      "shoegaze": ["Modern Shoegaze", "Dream Pop", "Slowdive style"]
+      " gaze": ["Modern Shoegaze", "Dream Pop", "Slowdive style"]
     },
     "filters": {
       "duration_min": 60,

@@ -10,7 +10,6 @@ import os
 import sys
 import json
 import requests
-import yt_dlp
 import torch.nn.functional as F
 import torch
 import numpy as np
@@ -40,10 +39,18 @@ class MusicSource:
     title: str
     artist: str
     url: str
-    source: str  # 'youtube', 'jamendo'
+    source: str  # 'jamendo'
     genre: Optional[str] = None
     duration: Optional[int] = None
     license_info: Optional[str] = None
+    # New Jamendo-specific fields
+    tags: Optional[List[str]] = None
+    description: Optional[str] = None
+    speed: Optional[str] = None
+    vocalinstrumental: Optional[str] = None
+    downloads_total: Optional[int] = None
+    release_date: Optional[str] = None
+    album_name: Optional[str] = None
 
 
 class MusicExpander:
@@ -83,36 +90,17 @@ class MusicExpander:
         
         # Load configuration
         self.config = self._load_config()
-        
-        # Setup downloaders
-        self.yt_dlp_opts = {
-            'format': 'bestaudio/best',
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }],
-            'outtmpl': str(self.download_dir / '%(title)s.%(ext)s'),
-            'match_filter': lambda info: 'is_live' not in info and info.get('duration', 0) < 600,
-            'quiet': True,
-            'no_warnings': True,
-        }
     
     def _load_config(self) -> Dict:
         """Load configuration for music sources"""
         config_path = Path(__file__).parent.parent / "config" / "music_sources.json"
         
         default_config = {
-            "youtube_audio_library": {
-                "enabled": True,
-                "max_downloads": 20,
-                "genres": ["ambient", "electronic", "indie", "lo-fi", "synthwave"]
-            },
             "jamendo": {
                 "enabled": True,
                 "api_key": "ENV:JAMENDO_CLIENT_ID",
-                "max_downloads": 10,
-                "genres": ["electronic", "instrumental", "ambient"]
+                "max_downloads": 20,
+                "genres": ["electronic", "instrumental", "ambient", "synthwave", "lofi", "citypop", "shoegaze"]
             }
         }
         
@@ -185,100 +173,6 @@ class MusicExpander:
         except Exception as e:
             print(f"Acoustic validation failed: {e}")
             return False
-    
-    def get_youtube_audio_library_tracks(self, genre: str = "ambient", max_tracks: int = 10) -> List[MusicSource]:
-        """
-        Get tracks from YouTube using yt-dlp search with enhanced search terms
-        
-        Searches for no-copyright/Creative Commons music on YouTube
-        """
-        try:
-            # Create search queries using configured search terms
-            search_queries = []
-
-            youtube_config = self.config.get("youtube_audio_library", {})
-            base_terms = youtube_config.get("youtube_search_terms", {}).get(genre, [])
-            if not base_terms:
-                base_terms = self.config.get("search_terms", {}).get(genre, [genre])
-            for term in base_terms:
-                search_queries.append(f"{term} official audio") 
-                search_queries.append(f"{term} high quality")
-            
-            search_queries = list(dict.fromkeys(search_queries))
-            self.logger.info(f"🔍 Youtube search: {search_queries[:3]}")
-
-            # Load filter configurations from JSON
-            filters = youtube_config.get("filters", {})
-            d_min = filters.get("duration_min", 60)
-            d_max = filters.get("duration_max", 600)
-            exclude_list = ["tutorial", "reaction", "review", "lesson", "how to", "mashup", "Jay Rock"]
-
-            sources = []
-            
-            # Try multiple search terms for better results
-            for search_term in search_queries[:3]:  # Limit to 3 search terms
-                if len(sources) >= max_tracks:
-                    break
-                    
-                search_query = f"ytsearch{max_tracks + 5}:{search_term}"
-                
-                ydl_opts = {
-                    'quiet': True,
-                    'no_warnings': True,
-                    'extract_flat': False,
-                    'skip_download': True,
-                }
-                
-                try:
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        info = ydl.extract_info(search_query, download=False)
-                        
-                        if info and 'entries' in info:
-                            for entry in info.get('entries', []):
-                                if entry is None:
-                                    continue
-
-                                title = entry.get('title', 'Unknown Title')
-                                duration = entry.get('duration', 0)
-                                webpage_url = entry.get('webpage_url')
-
-                                if not webpage_url: continue
-                                
-                                self.logger.debug(f"检查视频: {title} | 时长: {duration}s")
-
-                                if duration and (duration < d_min or duration > d_max):
-                                    self.logger.debug(f"跳过(时长不符): {title}")
-                                    continue
-                                
-                                if any(term.lower() in title.lower() for term in exclude_list):
-                                    self.logger.debug(f"跳过(命中黑名单): {title}")
-                                    continue
-
-                                source = MusicSource(
-                                    title=title,
-                                    artist=entry.get('uploader', 'Unknown Artist'),
-                                    url=webpage_url,
-                                    source="youtube_audio_library",
-                                    genre=genre,
-                                    duration=duration,
-                                    license_info="Learning/Research Use"
-                                )
-
-                                sources.append(source)
-                                
-                                if len(sources) >= max_tracks:
-                                    break
-                                
-                except Exception as e:
-                    self.logger.warning(f"YouTube search failed for term '{search_term}': {e}")
-                    continue
-                    
-            self.logger.info(f"Found {len(sources)} YouTube tracks for genre '{genre}'")
-            return sources
-            
-        except Exception as e:
-            self.logger.error(f"Failed to fetch from YouTube: {e}")
-            return []
 
 
     def get_jamendo_tracks(self, genre: str = "electronic", max_tracks: int = 10) -> List[MusicSource]:
@@ -294,7 +188,7 @@ class MusicExpander:
         
         base_url = "https://api.jamendo.com/v3.0/tracks/"
         
-        # Try different search approaches
+        # Try different search approaches with enhanced metadata
         search_params_list = [
             # Method 1: Search by tags
             {
@@ -302,7 +196,8 @@ class MusicExpander:
                 'format': 'json',
                 'limit': min(max_tracks, 50),
                 'tags': genre,
-                'audioformat': 'mp32'
+                'audioformat': 'mp32',
+                'include': 'musicinfo'
             },
             # Method 2: Search by text in name/artist
             {
@@ -310,7 +205,8 @@ class MusicExpander:
                 'format': 'json',
                 'limit': min(max_tracks, 50),
                 'search': genre,
-                'audioformat': 'mp32'
+                'audioformat': 'mp32',
+                'include': 'musicinfo'
             },
             # Method 3: General search with order by popularity
             {
@@ -318,7 +214,8 @@ class MusicExpander:
                 'format': 'json',
                 'limit': min(max_tracks, 50),
                 'order': 'popularity_total',
-                'audioformat': 'mp32'
+                'audioformat': 'mp32',
+                'include': 'musicinfo'
             }
         ]
         
@@ -356,6 +253,19 @@ class MusicExpander:
                         genre_match = True  # Accept all for general popularity search
                     
                     if genre_match or len(all_sources) < max_tracks//3:  # Allow some general tracks
+                        # Extract enhanced metadata from Jamendo API
+                        musicinfo = track.get('musicinfo', {})
+                        
+                        # Parse tags if available - Jamendo tags structure
+                        tags = []
+                        tag_data = musicinfo.get('tags', {})
+                        if isinstance(tag_data, dict):
+                            # Get genres and instruments
+                            genres = tag_data.get('genres', [])
+                            instruments = tag_data.get('instruments', [])
+                            vartags = tag_data.get('vartags', [])
+                            tags = genres + instruments + vartags
+                        
                         source = MusicSource(
                             title=track.get('name', 'Unknown'),
                             artist=track.get('artist_name', 'Unknown Artist'),
@@ -363,7 +273,15 @@ class MusicExpander:
                             source="jamendo",
                             genre=genre,
                             duration=int(track.get('duration', 0)),
-                            license_info="Creative Commons"
+                            license_info="Creative Commons",
+                            # Enhanced Jamendo metadata
+                            tags=tags,
+                            description=track.get('shorturl', ''),  # Use shorturl as description for now
+                            speed=musicinfo.get('speed', 'unknown'),
+                            vocalinstrumental=musicinfo.get('vocalinstrumental', 'unknown'),
+                            downloads_total=0,  # Not available in this API response
+                            release_date=track.get('releasedate', ''),
+                            album_name=track.get('album_name', '')
                         )
                         all_sources.append(source)
                         
@@ -390,9 +308,7 @@ class MusicExpander:
             Path to downloaded file or None if failed
         """
         try:
-            if source.source == "youtube_audio_library":
-                return self._download_youtube_track(source)
-            elif source.source in ["jamendo"]:
+            if source.source in ["jamendo"]:
                 return self._download_direct_url(source)
             else:
                 self.logger.warning(f"Unsupported source type: {source.source}")
@@ -400,27 +316,6 @@ class MusicExpander:
                 
         except Exception as e:
             self.logger.error(f"Failed to download {source.title}: {e}")
-            return None
-    
-    def _download_youtube_track(self, source: MusicSource) -> Optional[str]:
-        """Download track from YouTube using yt-dlp"""
-        try:
-            with yt_dlp.YoutubeDL(self.yt_dlp_opts) as ydl:
-                # Extract info first
-                info = ydl.extract_info(source.url, download=False)
-                expected_filename = ydl.prepare_filename(info)
-                mp3_filename = str(Path(expected_filename).with_suffix('.mp3'))
-
-                if os.path.exists(mp3_filename):
-                    self.logger.info(f"File already exists: {mp3_filename}")
-                    return mp3_filename
-                
-                # Download
-                ydl.download([source.url])
-                return mp3_filename
-                
-        except Exception as e:
-            self.logger.error(f"YouTube download failed for {source.title}: {e}")
             return None
     
     def _download_direct_url(self, source: MusicSource) -> Optional[str]:
@@ -505,19 +400,15 @@ class MusicExpander:
             
             self.logger.info(f"🎵 Processing genre: {genre} (Target for this genre: {current_genre_limit})")
             
-            # Get sources from different providers
+            # Get sources from Jamendo
             all_sources = []
             search_limit = max(5, current_genre_limit * 3)
-            
-            # YouTube Audio Library (mock implementation)
-            yt_sources = self.get_youtube_audio_library_tracks(genre, search_limit)
-            all_sources.extend(yt_sources)
             
             # Jamendo
             jamendo_sources = self.get_jamendo_tracks(genre, search_limit)
             all_sources.extend(jamendo_sources)
             
-            # Shuffle to mix sources
+            # Shuffle for variety
             random.shuffle(all_sources)
             
             # Download and process
@@ -640,19 +531,27 @@ class MusicExpander:
 
             final_genre = source.genre if source.genre else model_suggested_genre
 
-            # Prepare metadata
+            # Prepare metadata with enhanced Jamendo information
             metadata = {
                 "filename": os.path.basename(file_path),
                 "full_path": file_path,
-                "title": source.title,
-                "artist": source.artist,
-                "genre": final_genre,
-                "model_tag": model_suggested_genre,
-                "source": source.source,
-                "duration": source.duration,
+                "title": source.title or "unknown",
+                "artist": source.artist or "unknown",
+                "genre": final_genre or "unknown",
+                "model_tag": model_suggested_genre or "unknown",
+                "source": source.source or "unknown",
+                "duration": source.duration or 0,
                 "license": source.license_info or "unknown",
                 "added_by": "music_expander",
-                "timestamp": int(time.time())
+                "timestamp": int(time.time()),
+                # Enhanced Jamendo metadata for text-based search (convert list to string)
+                "tags": ",".join(source.tags) if source.tags else "",
+                "description": source.description or "",
+                "speed": source.speed or "unknown",
+                "vocalinstrumental": source.vocalinstrumental or "unknown",
+                "downloads_total": source.downloads_total or 0,
+                "release_date": source.release_date or "",
+                "album_name": source.album_name or ""
             }
             
             # Add to vector database
