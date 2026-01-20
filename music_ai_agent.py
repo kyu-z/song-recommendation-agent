@@ -2,6 +2,7 @@ import os
 import base64
 import re
 import random
+import json
 import sys
 from pathlib import Path
 from typing import Dict, Any, Optional, List
@@ -65,19 +66,24 @@ class MusicAgent:
     
     def _perception_stage(self, user_input: str) -> Dict[str, Any]:
         """
-        Stage 1: Perception - Analyze input and determine genre
+        Stage 1: Perception - Analyze input and extract genre, vocal_type, and keywords
         
         Args:
             user_input: User input (text or image path)
             
         Returns:
-            Context dict with perception results
+            Context dict with perception results including:
+            - suggested_genre: Music genre
+            - vocal_type: 'vocal' or 'instrumental' or None
+            - keywords: Comma-separated keywords for mood/tags
         """
         context = {
             'original_input': user_input,
             'is_image': False,
             'image_analysis': '',
             'suggested_genre': '',
+            'vocal_type': None,
+            'keywords': None,
             'query_text': user_input
         }
         
@@ -89,16 +95,44 @@ class MusicAgent:
         if os.path.isfile(user_input) and user_input.lower().endswith(('.png', '.jpg', '.jpeg')):
             context['is_image'] = True
             
-            # Use vision model for image analysis
-            vision_prompt = f"分析这张图片的意境。然后从以下流派中选出1个最匹配的单词：[{genres_pool}]。注意：直接输出单词本身，不要带标点符号，不要解释。"
+            # Enhanced vision prompt: extract genre, vocal preference, and mood keywords
+            vision_prompt = f"""分析这张图片的意境，然后回答以下问题（用JSON格式）：
+1. 流派：从以下流派中选出1个最匹配的：[{genres_pool}]
+2. 人声偏好：判断这张图更适合"vocal"（有人声）还是"instrumental"（纯音乐），如果无法判断则返回null
+3. 心情关键词：提取2-3个描述这张图心情/氛围的英文关键词（如：chill, night, calm, energetic），用逗号分隔
+
+请以JSON格式输出，例如：{{"genre": "jazz", "vocal_type": "instrumental", "keywords": "night,calm"}}
+如果无法判断某个字段，使用null。"""
             
             try:
-                suggested_genre = self.model_manager.invoke_vision(user_input, vision_prompt)
-                context['suggested_genre'] = re.sub(r'[^\w\s]', '', suggested_genre).strip().lower()
+                analysis_result = self.model_manager.invoke_vision(user_input, vision_prompt)
+                
+                # Try to parse JSON response
+                try:
+                    # Extract JSON from response (handle markdown code blocks)
+                    json_match = re.search(r'\{[^}]+\}', analysis_result, re.DOTALL)
+                    if json_match:
+                        parsed = json.loads(json_match.group())
+                        context['suggested_genre'] = parsed.get('genre', '').lower().strip()
+                        context['vocal_type'] = parsed.get('vocal_type', None)
+                        if context['vocal_type']:
+                            context['vocal_type'] = context['vocal_type'].lower().strip()
+                        context['keywords'] = parsed.get('keywords', None)
+                    else:
+                        # Fallback: extract genre only
+                        context['suggested_genre'] = re.sub(r'[^\w\s]', '', analysis_result).strip().lower()
+                except:
+                    # Fallback: extract genre only
+                    context['suggested_genre'] = re.sub(r'[^\w\s]', '', analysis_result).strip().lower()
+                
+                # Validate genre
+                if context['suggested_genre'] not in available_genres:
+                    context['suggested_genre'] = available_genres[0] if available_genres else "electronic"
+                
                 context['image_analysis'] = f"这张图散发着一种 {context['suggested_genre']} 的氛围。"
                 context['query_text'] = "这张图片的视觉意境"
                 
-                print(f"🖼️  [视觉感知] 图片意境: {context['suggested_genre']}")
+                print(f"🖼️  [视觉感知] 流派: {context['suggested_genre']}, 人声类型: {context['vocal_type']}, 关键词: {context['keywords']}")
                 
             except Exception as e:
                 print(f"⚠️  Vision analysis failed: {e}")
@@ -106,15 +140,43 @@ class MusicAgent:
                 context['image_analysis'] = "图片分析失败，使用默认推荐。"
         
         else:
-            # Text mode - use text model for genre classification
-            keyword_prompt = f"根据描述 '{user_input}'，从以下流派中选出一个最匹配的：[{genres_pool}]。仅输出单词，不要标点。"
+            # Text mode - enhanced analysis for genre, vocal_type, and keywords
+            enhanced_prompt = f"""分析用户描述 '{user_input}'，然后回答以下问题（用JSON格式）：
+1. 流派：从以下流派中选出1个最匹配的：[{genres_pool}]
+2. 人声偏好：用户是否明确提到"纯音乐"、"无人声"、"instrumental"（返回"instrumental"），或提到"有人声"、"vocal"（返回"vocal"），如果未提及则返回null
+3. 心情关键词：提取2-3个描述用户心情/氛围的英文关键词（如：chill, night, calm, energetic, trap, dark），用逗号分隔
+
+请以JSON格式输出，例如：{{"genre": "hiphop", "vocal_type": "instrumental", "keywords": "trap,chill"}}
+如果无法判断某个字段，使用null。"""
             
             try:
-                suggested_genre = self.model_manager.invoke_text(keyword_prompt)
-                context['suggested_genre'] = re.sub(r'[^\w\s]', '', suggested_genre).strip().lower()
+                analysis_result = self.model_manager.invoke_text(enhanced_prompt)
+                
+                # Try to parse JSON response
+                try:
+                    # Extract JSON from response
+                    json_match = re.search(r'\{[^}]+\}', analysis_result, re.DOTALL)
+                    if json_match:
+                        parsed = json.loads(json_match.group())
+                        context['suggested_genre'] = parsed.get('genre', '').lower().strip()
+                        context['vocal_type'] = parsed.get('vocal_type', None)
+                        if context['vocal_type']:
+                            context['vocal_type'] = context['vocal_type'].lower().strip()
+                        context['keywords'] = parsed.get('keywords', None)
+                    else:
+                        # Fallback: extract genre only
+                        context['suggested_genre'] = re.sub(r'[^\w\s]', '', analysis_result).strip().lower()
+                except:
+                    # Fallback: extract genre only
+                    context['suggested_genre'] = re.sub(r'[^\w\s]', '', analysis_result).strip().lower()
+                
+                # Validate genre
+                if context['suggested_genre'] not in available_genres:
+                    context['suggested_genre'] = available_genres[0] if available_genres else "electronic"
+                
                 context['image_analysis'] = f"听众想要这种感觉: {user_input}"
                 
-                print(f"🔍 [文本感知] 确定的流派: {context['suggested_genre']}")
+                print(f"🔍 [文本感知] 流派: {context['suggested_genre']}, 人声类型: {context['vocal_type']}, 关键词: {context['keywords']}")
                 
             except Exception as e:
                 print(f"⚠️  Text analysis failed: {e}")
@@ -125,44 +187,105 @@ class MusicAgent:
     
     def _retrieval_stage(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Stage 2: Retrieval - Search music database using MusicSearchTool
+        Stage 2: Retrieval - Search music database with enhanced filters
         
         Args:
-            context: Context from perception stage
+            context: Context from perception stage (includes genre, vocal_type, keywords)
             
         Returns:
-            Context with search results
+            Context with search results including full metadata
         """
         genre = context['suggested_genre']
+        vocal_type = context.get('vocal_type')
+        keywords = context.get('keywords')
         
-        # Use MusicSearchTool for retrieval
-        search_results = self.music_search_tool.search_by_genre(genre, limit=15)
+        # Try search with all filters first
+        search_results = self.music_search_tool.search_by_genre(
+            genre=genre,
+            limit=15,
+            vocal_type=vocal_type,
+            keywords=keywords
+        )
+        
+        # If no results with vocal_type filter, try without it (but keep keywords)
+        if not search_results and vocal_type:
+            print(f"⚠️  [检索] 使用 vocal_type={vocal_type} 无结果，尝试放宽过滤条件...")
+            search_results = self.music_search_tool.search_by_genre(
+                genre=genre,
+                limit=15,
+                vocal_type=None,  # Remove vocal_type filter
+                keywords=keywords
+            )
+        
+        # If still no results with keywords, try without keywords (but keep vocal_type if it worked)
+        if not search_results and keywords:
+            print(f"⚠️  [检索] 使用关键词过滤无结果，尝试仅使用流派...")
+            search_results = self.music_search_tool.search_by_genre(
+                genre=genre,
+                limit=15,
+                vocal_type=vocal_type if vocal_type else None,
+                keywords=None  # Remove keywords filter
+            )
+        
+        # Final fallback: genre only
+        if not search_results:
+            print(f"⚠️  [检索] 使用所有过滤条件无结果，回退到仅流派搜索...")
+            search_results = self.music_search_tool.search_by_genre(
+                genre=genre,
+                limit=15,
+                vocal_type=None,
+                keywords=None
+            )
         
         if not search_results:
             context['search_results'] = []
             context['candidates_text'] = ""
-            print(f"❌ [检索] 没有找到 '{genre}' 类型的音乐")
+            filter_info = []
+            if vocal_type:
+                filter_info.append(f"人声类型={vocal_type}")
+            if keywords:
+                filter_info.append(f"关键词={keywords}")
+            filter_str = f" (过滤条件: {', '.join(filter_info)})" if filter_info else ""
+            print(f"❌ [检索] 没有找到 '{genre}' 类型的音乐{filter_str}")
         else:
             # Shuffle for variety
             random.shuffle(search_results)
             context['search_results'] = search_results
             
-            # Format candidates for LLM
+            # Format candidates for LLM with full metadata (source_tags, vocal_type, speed)
             candidates_text = ""
             for result in search_results:
-                candidates_text += f"候选{result['index']}: 标题: {result['title']}, 描述: {result['model_tag']}\n"
+                tags_str = ", ".join(result.get('source_tags', [])) if result.get('source_tags') else "无标签"
+                vocal_display = result.get('vocal_type', 'unknown')
+                speed_display = result.get('speed', 'unknown')
+                
+                candidates_text += (
+                    f"候选{result['index']}: "
+                    f"标题: {result['title']} | "
+                    f"艺术家: {result['artist']} | "
+                    f"标签: [{tags_str}] | "
+                    f"类型: [{vocal_display}] | "
+                    f"速度: [{speed_display}] | "
+                    f"模型标签: {result.get('model_tag', 'unknown')}\n"
+                )
             context['candidates_text'] = candidates_text
             
-            print(f"✅ [检索] 找到 {len(search_results)} 首 '{genre}' 音乐")
+            filter_info = []
+            if vocal_type:
+                filter_info.append(f"人声类型={vocal_type}")
+            if keywords:
+                filter_info.append(f"关键词={keywords}")
+            filter_str = f" (过滤条件: {', '.join(filter_info)})" if filter_info else ""
+            print(f"✅ [检索] 找到 {len(search_results)} 首 '{genre}' 音乐{filter_str}")
         
         return context
     
     def _decision_stage(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Stage 3: Decision - Select best matching track from candidates
+        Stage 3: Decision - Select best matching track based on tags and metadata
         
         Args:
-            context: Context from retrieval stage
+            context: Context from retrieval stage (includes candidates with full metadata)
             
         Returns:
             Context with selected music
@@ -180,16 +303,29 @@ class MusicAgent:
             print(f"🎯 [决策] 唯一选择: {search_results[0]['title']}")
             return context
         
-        # Use LLM to select best match
-        selection_prompt = f"""
-        你是一位感性的音乐主理人。
-        图片/环境意境描述: {context['image_analysis']}
+        # Enhanced LLM selection prompt with tag-based reasoning
+        user_preferences = []
+        if context.get('vocal_type'):
+            user_preferences.append(f"人声偏好: {context['vocal_type']}")
+        if context.get('keywords'):
+            user_preferences.append(f"心情关键词: {context['keywords']}")
+        preferences_text = "\n".join(user_preferences) if user_preferences else "无特定偏好"
         
-        曲库候选名单：
-        {context['candidates_text']}
-        
-        请从中选出 1 首意境最贴合的歌。只需回复数字索引（如: 1）。
-        """
+        selection_prompt = f"""你是一位感性的音乐主理人，需要根据标签证据来选择最合适的歌曲。
+
+用户需求/图片意境: {context['image_analysis']}
+用户偏好: {preferences_text}
+
+候选歌曲列表（每首歌都包含标签、类型、速度等元数据）：
+{context['candidates_text']}
+
+请仔细分析每首歌的标签（tags）、类型（vocal/instrumental）、速度等信息，选择1首最贴合用户需求的歌曲。
+你的选择应该基于：
+1. 标签匹配度（如果用户提到关键词，优先选择标签中包含这些关键词的歌曲）
+2. 人声类型匹配度（如果用户有偏好，优先匹配）
+3. 整体氛围契合度
+
+请只回复数字索引（如: 1），不要有其他文字。"""
         
         try:
             selection_response = self.model_manager.invoke_text(selection_prompt)
@@ -201,7 +337,12 @@ class MusicAgent:
                 # Ensure index is valid
                 idx = max(0, min(idx, len(search_results) - 1))
                 context['selected_music'] = search_results[idx]
-                print(f"🎯 [智能决策] AI 选中了: {context['selected_music']['title']}")
+                
+                # Log selection reasoning
+                selected = context['selected_music']
+                tags_str = ", ".join(selected.get('source_tags', [])) if selected.get('source_tags') else "无标签"
+                print(f"🎯 [智能决策] AI 选中了: {selected['title']}")
+                print(f"   标签: [{tags_str}], 类型: [{selected.get('vocal_type', 'unknown')}], 速度: [{selected.get('speed', 'unknown')}]")
             else:
                 # Fallback to random selection
                 context['selected_music'] = random.choice(search_results)
@@ -215,20 +356,26 @@ class MusicAgent:
     
     def _generation_stage(self, context: Dict[str, Any]) -> str:
         """
-        Stage 4: Generation - Generate personalized recommendation
+        Stage 4: Generation - Generate personalized recommendation with tag references
         
         Args:
             context: Context from decision stage
             
         Returns:
-            Final recommendation text
+            Final recommendation text that references source_tags for persuasion
         """
         selected_music = context.get('selected_music')
         
         if not selected_music:
             return f"抱歉，关于 '{context['suggested_genre']}' 的音乐，我的收藏夹暂时还是空白。"
         
-        # Generate recommendation using LLM
+        # Extract tags for reference
+        source_tags = selected_music.get('source_tags', [])
+        tags_display = ", ".join(source_tags) if source_tags else "无标签"
+        vocal_type = selected_music.get('vocal_type', 'unknown')
+        speed = selected_music.get('speed', 'unknown')
+        
+        # Generate recommendation using LLM with tag references
         prompt_template = ChatPromptTemplate.from_template("""
         你是一位感性、温柔的深夜电台音乐主理人。
         
@@ -236,27 +383,45 @@ class MusicAgent:
         
         你决定推荐这首歌:
         - 标题: {title}
+        - 艺术家: {artist}
         - 风格: {genre}
+        - 标签: [{tags}]
+        - 类型: [{vocal_type}]
+        - 速度: [{speed}]
         - AI 捕捉到的隐藏韵律: {model_tag}
         
         请用自然、动人的语言告诉听众，为什么你觉得这首歌和此时此刻的氛围是最完美的搭配。
+        
+        重要要求：
+        1. 必须引用歌曲的标签（tags）来增强推荐的说服力
+        2. 例如："我注意到这首歌带有'chill'和'night'标签，非常适合你现在的状态"
+        3. 如果标签中有与用户需求相关的关键词，一定要提到
+        4. 语言要感性、温暖，像深夜电台DJ一样
+        
+        请开始你的推荐：
         """)
         
         try:
             recommendation_prompt = prompt_template.format(
                 query=context['query_text'],
                 title=selected_music['title'],
+                artist=selected_music.get('artist', 'Unknown Artist'),
                 genre=selected_music['genre'],
+                tags=tags_display,
+                vocal_type=vocal_type,
+                speed=speed,
                 model_tag=selected_music.get('model_tag', '未知韵律')
             )
             
             recommendation = self.model_manager.invoke_text(recommendation_prompt)
-            print(f"✨ [生成] 推荐语生成完成")
+            print(f"✨ [生成] 推荐语生成完成（已引用标签: {tags_display}）")
             return recommendation
             
         except Exception as e:
             print(f"⚠️  Generation failed: {e}")
-            return f"推荐: {selected_music['title']} - 一首很棒的 {selected_music['genre']} 音乐。"
+            # Fallback with tag reference
+            tags_mention = f"（标签: {tags_display}）" if source_tags else ""
+            return f"推荐: {selected_music['title']} by {selected_music.get('artist', 'Unknown')} - 一首很棒的 {selected_music['genre']} 音乐{tags_mention}。"
     
     def get_recommendation(self, user_input: str) -> str:
         """
@@ -308,7 +473,7 @@ if __name__ == "__main__":
     print(f"\n推荐结果:\n{recommendation}")
     
     # Test image input (if exists)
-    test_image = "img/music_img.jpg"
+    test_image = "img/smtm.jpg"
     if os.path.exists(test_image):
         print(f"\n图片输入: {test_image}")
         recommendation = agent_openai.get_recommendation(test_image)

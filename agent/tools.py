@@ -18,6 +18,8 @@ class MusicSearchInput(BaseModel):
     """Input schema for music search tool"""
     genre: str = Field(description="Genre to search for")
     limit: int = Field(default=15, description="Maximum number of results to return")
+    vocal_type: Optional[str] = Field(default=None, description="Filter by vocal type: 'vocal' or 'instrumental'")
+    keywords: Optional[str] = Field(default=None, description="Keywords to search in tags (comma-separated)")
 
 
 class MusicSearchTool:
@@ -37,46 +39,92 @@ class MusicSearchTool:
         """
         self.vector_store = vector_store or MusicVectorStore()
     
-    def search_by_genre(self, genre: str, limit: int = 15) -> List[Dict[str, Any]]:
+    def search_by_genre(self, genre: str, limit: int = 15, 
+                       vocal_type: Optional[str] = None, 
+                       keywords: Optional[str] = None) -> List[Dict[str, Any]]:
         """
-        Search music by genre with enhanced filtering (excluding GTZAN training data)
+        Search music by genre with enhanced filtering and Jamendo metadata support
         
         Args:
             genre: Target genre to search for
             limit: Maximum number of results
+            vocal_type: Filter by vocal type ('vocal' or 'instrumental')
+            keywords: Keywords to search in tags (comma-separated)
             
         Returns:
-            List of music tracks with metadata from user library only
+            List of music tracks with metadata including source_tags and vocal_type
         """
         try:
-            # Execute genre-based search, excluding GTZAN training data
+            # Build complex where query
+            where_conditions = [
+                {"genre": genre},
+                {"source": {"$ne": "gtzan"}}  # Exclude GTZAN training data
+            ]
+            
+            # Add vocal_type filter if provided
+            if vocal_type:
+                # Normalize vocal_type values
+                vocal_type_normalized = vocal_type.lower().strip()
+                if vocal_type_normalized in ['vocal', 'instrumental']:
+                    where_conditions.append({"vocalinstrumental": vocal_type_normalized})
+            
+            # Construct final where query
+            where_query = {"$and": where_conditions}
+            
+            # Execute search
             results = self.vector_store.collection.get(
-                where={
-                    "$and": [
-                        {"genre": genre},
-                        {"source": {"$ne": "gtzan"}}  # Exclude GTZAN training data
-                    ]
-                },
+                where=where_query,
                 include=['metadatas'],
-                limit=limit
+                limit=limit * 2  # Get more results for keyword filtering
             )
             
             music_list = results.get('metadatas', [])
+            ids_list = results.get('ids', [])
             
             if not music_list:
                 return []
             
-            # Return formatted results
+            # Filter by keywords if provided
+            filtered_results = []
+            if keywords:
+                keyword_list = [k.strip().lower() for k in keywords.split(',') if k.strip()]
+                
+                for i, metadata in enumerate(music_list):
+                    tags_str = metadata.get('tags', '').lower()
+                    # Check if any keyword matches tags
+                    if any(keyword in tags_str for keyword in keyword_list):
+                        filtered_results.append((ids_list[i] if i < len(ids_list) else None, metadata))
+            else:
+                # No keyword filtering, use all results
+                for i, metadata in enumerate(music_list):
+                    filtered_results.append((ids_list[i] if i < len(ids_list) else None, metadata))
+            
+            # Limit results
+            filtered_results = filtered_results[:limit]
+            
+            # Format results with source_tags and vocal_type
             formatted_results = []
-            for i, metadata in enumerate(music_list):
+            for idx, (song_id, metadata) in enumerate(filtered_results):
+                # Extract tags (source_tags)
+                tags_str = metadata.get('tags', '')
+                source_tags = [tag.strip() for tag in tags_str.split(',') if tag.strip()] if tags_str else []
+                
+                # Extract vocal_type
+                vocal_type_value = metadata.get('vocalinstrumental', 'unknown')
+                
                 formatted_results.append({
-                    'index': i + 1,
+                    'index': idx + 1,
+                    'id': song_id,
                     'title': metadata.get('title', 'Unknown'),
                     'artist': metadata.get('artist', 'Unknown Artist'),
                     'genre': metadata.get('genre', genre),
                     'model_tag': metadata.get('model_tag', 'Unknown'),
                     'source': metadata.get('source', 'Unknown'),
                     'duration': metadata.get('duration', 0),
+                    'source_tags': source_tags,  # List of tags
+                    'vocal_type': vocal_type_value,  # vocal/instrumental/unknown
+                    'speed': metadata.get('speed', 'unknown'),
+                    'album_name': metadata.get('album_name', ''),
                     'metadata': metadata
                 })
             
@@ -115,23 +163,45 @@ class MusicSearchTool:
         Returns:
             StructuredTool instance
         """
-        def _search_music(genre: str, limit: int = 15) -> str:
-            """Search for music by genre"""
-            results = self.search_by_genre(genre, limit)
+        def _search_music(genre: str, limit: int = 15, 
+                         vocal_type: Optional[str] = None, 
+                         keywords: Optional[str] = None) -> str:
+            """Search for music by genre with optional vocal type and keyword filters"""
+            results = self.search_by_genre(genre, limit, vocal_type, keywords)
             
             if not results:
-                return f"No music found for genre: {genre}"
+                filter_info = []
+                if vocal_type:
+                    filter_info.append(f"vocal_type={vocal_type}")
+                if keywords:
+                    filter_info.append(f"keywords={keywords}")
+                filter_str = f" with filters: {', '.join(filter_info)}" if filter_info else ""
+                return f"No music found for genre: {genre}{filter_str}"
             
-            # Format results as string for LLM consumption
-            formatted = f"Found {len(results)} tracks for genre '{genre}':\n"
+            # Format results as string for LLM consumption with source_tags and vocal_type
+            formatted = f"Found {len(results)} tracks for genre '{genre}'"
+            if vocal_type:
+                formatted += f" (vocal_type: {vocal_type})"
+            if keywords:
+                formatted += f" (keywords: {keywords})"
+            formatted += ":\n\n"
+            
             for result in results[:5]:  # Limit to top 5 for context
-                formatted += f"- {result['title']} by {result['artist']} ({result['model_tag']})\n"
+                # Format tags
+                tags_display = ", ".join(result['source_tags']) if result['source_tags'] else "无标签"
+                
+                # Format vocal type
+                vocal_display = result['vocal_type'] if result['vocal_type'] != 'unknown' else "未知"
+                
+                formatted += f"- {result['title']} by {result['artist']}\n"
+                formatted += f"  标签：[{tags_display}] | 类型：[{vocal_display}]\n"
+                formatted += f"  流派：{result['genre']} | 模型标签：{result['model_tag']}\n\n"
             
             return formatted
         
         return StructuredTool(
             name="music_search",
-            description="Search for music tracks by genre in the vector database",
+            description="Search for music tracks by genre in the vector database. Supports filtering by vocal_type (vocal/instrumental) and keywords in tags.",
             func=_search_music,
             args_schema=MusicSearchInput
         )
@@ -212,6 +282,17 @@ if __name__ == "__main__":
         print(f"Found {len(results)} results:")
         for result in results:
             print(f"- {result['title']} by {result['artist']}")
+            print(f"  标签：{result.get('source_tags', [])} | 类型：{result.get('vocal_type', 'unknown')}")
+        
+        # Test with vocal_type filter
+        print(f"\nTesting search with vocal_type filter: instrumental")
+        results_instrumental = search_tool.search_by_genre(test_genre, limit=3, vocal_type="instrumental")
+        print(f"Found {len(results_instrumental)} instrumental results")
+        
+        # Test with keywords
+        print(f"\nTesting search with keywords: 'electronic'")
+        results_keywords = search_tool.search_by_genre(test_genre, limit=3, keywords="electronic")
+        print(f"Found {len(results_keywords)} results with keywords")
     
     # Test LangChain tool conversion
     lc_tool = search_tool.as_langchain_tool()
