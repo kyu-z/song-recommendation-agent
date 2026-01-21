@@ -5,6 +5,7 @@ import random
 import json
 import sys
 import requests
+import time
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from langchain_core.runnables import RunnableLambda
@@ -146,6 +147,7 @@ class MusicAgent:
             'is_image': False,
             'image_analysis': '',
             'suggested_genre': '',
+            'original_genre_request': '',  # 新增：保存用户原始流派需求
             'vocal_type': None,
             'keywords': None,
             'query_text': user_input
@@ -177,17 +179,23 @@ class MusicAgent:
                     json_match = re.search(r'\{[^}]+\}', analysis_result, re.DOTALL)
                     if json_match:
                         parsed = json.loads(json_match.group())
-                        context['suggested_genre'] = parsed.get('genre', '').lower().strip()
+                        original_genre = parsed.get('genre', '').lower().strip()
+                        context['original_genre_request'] = original_genre  # 保存原始需求
+                        context['suggested_genre'] = original_genre
                         context['vocal_type'] = parsed.get('vocal_type', None)
                         if context['vocal_type']:
                             context['vocal_type'] = context['vocal_type'].lower().strip()
                         context['keywords'] = parsed.get('keywords', None)
                     else:
                         # Fallback: extract genre only
-                        context['suggested_genre'] = re.sub(r'[^\w\s]', '', analysis_result).strip().lower()
+                        original_genre = re.sub(r'[^\w\s]', '', analysis_result).strip().lower()
+                        context['original_genre_request'] = original_genre
+                        context['suggested_genre'] = original_genre
                 except:
                     # Fallback: extract genre only
-                    context['suggested_genre'] = re.sub(r'[^\w\s]', '', analysis_result).strip().lower()
+                    original_genre = re.sub(r'[^\w\s]', '', analysis_result).strip().lower()
+                    context['original_genre_request'] = original_genre
+                    context['suggested_genre'] = original_genre
                 
                 # Validate genre
                 if context['suggested_genre'] not in available_genres:
@@ -206,12 +214,19 @@ class MusicAgent:
         else:
             # Text mode - enhanced analysis for genre, vocal_type, and keywords
             enhanced_prompt = f"""分析用户描述 '{user_input}'，然后回答以下问题（用JSON格式）：
-1. 流派：从以下流派中选出1个最匹配的：[{genres_pool}]
-2. 人声偏好：用户是否明确提到"纯音乐"、"无人声"、"instrumental"（返回"instrumental"），或提到"有人声"、"vocal"（返回"vocal"），如果未提及则返回null
-3. 心情关键词：提取2-3个描述用户心情/氛围的英文关键词（如：chill, night, calm, energetic, trap, dark），用逗号分隔
 
-请以JSON格式输出，例如：{{"genre": "hiphop", "vocal_type": "instrumental", "keywords": "trap,chill"}}
-如果无法判断某个字段，使用null。"""
+用户输入: "{user_input}"
+可用流派: [{genres_pool}]
+
+请分析：
+1. 用户想要的流派（即使不在可用列表中，也要提取用户真实意图）
+2. 人声偏好：用户是否明确提到"纯音乐"、"无人声"、"instrumental"（返回"instrumental"），或提到"有人声"、"vocal"（返回"vocal"），如果未提及则返回null
+3. 心情关键词：提取2-3个描述用户心情/氛围的英文关键词（如：chill, night, calm, energetic, classical, jazz, blues），用逗号分隔
+
+输出格式（必须是有效的JSON）：
+{{"genre": "用户真实想要的流派", "vocal_type": "vocal或instrumental或null", "keywords": "关键词1,关键词2"}}
+
+注意：即使用户想要的流派不在可用列表中，也要如实记录用户的真实需求。"""
             
             try:
                 analysis_result = self.model_manager.invoke_text(enhanced_prompt)
@@ -222,19 +237,46 @@ class MusicAgent:
                     json_match = re.search(r'\{[^}]+\}', analysis_result, re.DOTALL)
                     if json_match:
                         parsed = json.loads(json_match.group())
-                        context['suggested_genre'] = parsed.get('genre', '').lower().strip()
+                        original_genre = parsed.get('genre', '').lower().strip()
+                        context['original_genre_request'] = original_genre  # 保存原始需求
+                        context['suggested_genre'] = original_genre
                         context['vocal_type'] = parsed.get('vocal_type', None)
                         if context['vocal_type']:
                             context['vocal_type'] = context['vocal_type'].lower().strip()
                         context['keywords'] = parsed.get('keywords', None)
                     else:
                         # Fallback: extract genre only
-                        context['suggested_genre'] = re.sub(r'[^\w\s]', '', analysis_result).strip().lower()
+                        original_genre = re.sub(r'[^\w\s]', '', analysis_result).strip().lower()
+                    context['original_genre_request'] = original_genre
+                    context['suggested_genre'] = original_genre
                 except:
                     # Fallback: extract genre only
-                    context['suggested_genre'] = re.sub(r'[^\w\s]', '', analysis_result).strip().lower()
+                    original_genre = re.sub(r'[^\w\s]', '', analysis_result).strip().lower()
+                    context['original_genre_request'] = original_genre
+                    context['suggested_genre'] = original_genre
                 
-                # Validate genre
+                # 确保原始流派需求被正确设置
+                if not context.get('original_genre_request'):
+                    # 从用户输入中直接提取流派关键词
+                    user_lower = user_input.lower()
+                    genre_keywords = ['jazz', '爵士', 'classical', '古典', 'blues', '蓝调', 'rock', '摇滚', 'pop', '流行']
+                    for keyword in genre_keywords:
+                        if keyword in user_lower:
+                            if keyword in ['爵士']:
+                                context['original_genre_request'] = 'jazz'
+                            elif keyword in ['古典']:
+                                context['original_genre_request'] = 'classical'
+                            elif keyword in ['蓝调']:
+                                context['original_genre_request'] = 'blues'
+                            elif keyword in ['摇滚']:
+                                context['original_genre_request'] = 'rock'
+                            elif keyword in ['流行']:
+                                context['original_genre_request'] = 'pop'
+                            else:
+                                context['original_genre_request'] = keyword
+                            break
+                
+                # Validate genre for local search (but keep original request intact)
                 if context['suggested_genre'] not in available_genres:
                     context['suggested_genre'] = available_genres[0] if available_genres else "electronic"
                 
@@ -252,15 +294,20 @@ class MusicAgent:
     def _generate_discovery_queries(self, context: Dict[str, Any]) -> List[str]:
         """
         生成发现阶段的搜索词，专门针对音乐推荐内容
+        优先使用用户原始流派需求，避免流派偏见
         """
-        genre = context.get('suggested_genre', '')
+        # 优先使用用户原始需求，而非数据库匹配的流派
+        original_genre = context.get('original_genre_request', '')
+        fallback_genre = context.get('suggested_genre', '')
+        genre = original_genre if original_genre else fallback_genre
+        
         keywords = context.get('keywords', '')
         cultural_context = self._extract_cultural_context(context)
         mood_description = self._extract_mood_description(context)
         
         queries = []
         
-        # 基于流派和关键词的推荐搜索
+        # 基于用户原始流派需求的推荐搜索
         if genre and keywords:
             queries.append(f"best {genre} songs for {keywords} mood reddit -site:youtube.com")
         elif genre:
@@ -268,7 +315,7 @@ class MusicAgent:
         
         # 文化背景相关搜索
         if cultural_context:
-            queries.append(f"{cultural_context} music recommendations blog -site:youtube.com -site:spotify.com")
+            queries.append(f"{cultural_context} {genre if genre else 'music'} recommendations blog -site:youtube.com -site:spotify.com")
         
         # 氛围场景搜索
         if mood_description:
@@ -277,6 +324,8 @@ class MusicAgent:
         # 如果没有生成任何搜索词，使用通用搜索
         if not queries:
             queries.append(f"atmospheric music recommendations reddit -site:youtube.com")
+        
+        print(f"🎯 [搜索词生成] 原始流派需求: {original_genre}, 本地匹配流派: {fallback_genre}")
         
         return queries[:3]  # 最多返回3个搜索词
     
@@ -418,23 +467,52 @@ class MusicAgent:
         
         final_results = []
         
-        for song_info in discovered_songs:
+        for i, song_info in enumerate(discovered_songs):
             try:
-                # 生成精准搜索词
-                precise_query = f'"{song_info["artist"]}" - "{song_info["song"]}" official audio'
-                print(f"🔍 搜索音源: {precise_query}")
+                # 优化搜索词格式，不使用强制引号
+                artist = song_info["artist"].strip()
+                song = song_info["song"].strip()
                 
-                # 搜索官方音源
-                source_results = self.brave_search.run(precise_query)
+                # 尝试多种搜索格式，从简单到复杂
+                search_formats = [
+                    f"site:youtube.com {artist} {song}",
+                    f"{artist} {song} official audio",
+                    f'"{artist}" - "{song}" official'
+                ]
                 
-                # AI校验：确保是标准单曲
-                validated_info = self._validate_music_source(source_results, song_info)
+                validated_info = None
+                
+                for search_format in search_formats:
+                    print(f"🔍 搜索音源 ({i+1}/{len(discovered_songs)}): {search_format}")
+                    
+                    # 添加延迟以符合API频率限制
+                    if i > 0:  # 第一次不需要等待
+                        time.sleep(1.5)  # 1.5秒延迟确保符合免费版限制
+                    
+                    try:
+                        # 搜索官方音源
+                        source_results = self.brave_search.run(search_format, count=5)
+                        
+                        # 记录搜索结果用于调试
+                        print(f"📝 [调试日志] 搜索词: {search_format}")
+                        print(f"📝 [调试日志] 返回结果前200字符: {source_results[:200]}...")
+                        
+                        # AI校验：确保是标准单曲
+                        validated_info = self._validate_music_source(source_results, song_info)
+                        
+                        if validated_info:
+                            break  # 找到有效链接，跳出搜索格式循环
+                            
+                    except Exception as search_error:
+                        print(f"⚠️  搜索格式 '{search_format}' 失败: {search_error}")
+                        continue
                 
                 if validated_info:
                     final_results.append(validated_info)
                     print(f"✅ 找到音源: {song_info['song']} - {song_info['artist']}")
                 else:
-                    print(f"❌ 未找到可靠音源: {song_info['song']}")
+                    print(f"❌ 未找到可靠音源: {song_info['song']} - {song_info['artist']}")
+                    print(f"📝 [调试日志] 尝试的所有搜索格式都未成功")
                     
             except Exception as e:
                 print(f"⚠️  音源搜索失败 '{song_info['song']}': {e}")
@@ -444,24 +522,24 @@ class MusicAgent:
     
     def _validate_music_source(self, search_results: str, song_info: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
-        校验搜索到的链接是否为标准单曲（非合集、非翻唱、非素材）
+        校验搜索到的链接是否为标准单曲（放宽匹配标准）
         """
         validation_prompt = f"""检查这些搜索结果，为歌曲 "{song_info['song']}" by {song_info['artist']} 找出最可靠的官方音源：
 
 搜索结果：
 {search_results[:1500]}
 
-验证标准：
-1. 必须是原艺人的官方版本或授权版本
-2. 优先YouTube官方频道、Spotify、Apple Music等知名平台
-3. 不是合集、播放列表、翻唱版本、素材音效
-4. 标题中明确包含歌曲名和艺人名
-5. 避免时长过长的混音版或现场版
+放宽的验证标准：
+1. 优先YouTube、Spotify、Apple Music等知名平台
+2. 标题包含歌曲名或艺人名的核心关键词即可（不需要完全匹配）
+3. 来自YouTube且标题相关的视频都视为有效
+4. 不是明显的合集、播放列表标题（避免"playlist"、"mix"、"compilation"等词）
+5. 不要过度严格要求官方版本
 
 请返回最符合要求的一个链接，格式：
-{{"link": "URL地址", "platform": "平台名", "title": "视频/音频标题"}}
+{{"link": "URL地址", "platform": "平台名", "title": "视频/音频标题", "match_reason": "匹配理由"}}
 
-如果没有找到符合要求的结果，返回null。只返回JSON格式，不要其他文字。"""
+如果没有找到任何相关结果，返回null。只返回JSON格式，不要其他文字。"""
         
         try:
             response = self.model_manager.invoke_text(validation_prompt)
@@ -472,19 +550,25 @@ class MusicAgent:
                 validated = json.loads(json_match.group())
                 
                 if validated and validated.get('link'):
+                    match_reason = validated.get('match_reason', 'AI验证通过')
+                    print(f"🎯 [音源验证] 匹配理由: {match_reason}")
+                    
                     return {
                         **song_info,
                         'official_link': validated['link'],
                         'platform': validated.get('platform', 'Unknown'),
                         'source_title': validated.get('title', ''),
+                        'match_reason': match_reason,
                         'source': 'web',
                         'duration_validated': True
                     }
             
+            print(f"📝 [调试日志] AI验证响应: {response[:200]}...")
             return None
             
         except Exception as e:
             print(f"⚠️  音源验证失败: {e}")
+            print(f"📝 [调试日志] 验证过程出错，原始搜索结果: {search_results[:300]}...")
             return None
 
     def _retrieval_stage(self, context: Dict[str, Any]) -> Dict[str, Any]:
