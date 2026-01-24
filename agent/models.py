@@ -23,21 +23,27 @@ class ModelManager:
         Args:
             use_local_model: If True, use local Ollama models; otherwise use OpenAI
         """
-        self.use_local = use_local_model
+        # 暂时禁用本地模型，强制使用 OpenAI
+        # self.use_local = use_local_model
+        self.use_local = False  # 强制禁用 Ollama
         self._setup_models()
     
     def _setup_models(self):
         """Setup models based on configuration"""
         if self.use_local:
-            try:
-                from langchain_community.llms import Ollama
-                self.vision_model = Ollama(model="qwen2.5:1.5b")
-                self.text_model = Ollama(model="qwen2.5:1.5b")
-                print("🤖 Using local Ollama models (Qwen2.5:1.5b)")
-            except ImportError:
-                print("⚠️  Ollama not available, falling back to OpenAI")
-                self.use_local = False
-                self._setup_openai_models()
+            # 暂时注释掉 Ollama 相关代码
+            # try:
+            #     from langchain_community.llms import Ollama
+            #     self.vision_model = Ollama(model="qwen2.5:1.5b")
+            #     self.text_model = Ollama(model="qwen2.5:1.5b")
+            #     print("🤖 Using local Ollama models (Qwen2.5:1.5b)")
+            # except ImportError:
+            #     print("⚠️  Ollama not available, falling back to OpenAI")
+            #     self.use_local = False
+            #     self._setup_openai_models()
+            print("🤖 本地模型已禁用，强制使用 OpenAI")
+            self.use_local = False
+            self._setup_openai_models()
         else:
             self._setup_openai_models()
     
