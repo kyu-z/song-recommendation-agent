@@ -108,6 +108,9 @@ class MusicAgent:
             print("⚠️  Brave_Search_API_KEY not found in environment")
             self.brave_search = None
         
+        # Initialize context storage
+        self._last_context = {}
+        
         # Build main processing chain
         self._build_main_chain()
         
@@ -119,7 +122,7 @@ class MusicAgent:
         self.perception_stage = RunnableLambda(self._perception_stage)
         self.retrieval_stage = RunnableLambda(self._retrieval_stage)
         self.decision_stage = RunnableLambda(self._decision_stage)
-        self.generation_stage = RunnableLambda(self._generation_stage)
+        self.generation_stage = RunnableLambda(self._generation_stage_with_context_save)
         
         # Compose main chain
         self.main_chain = (
@@ -808,6 +811,15 @@ class MusicAgent:
             context['final_report'] = result
             return result
     
+    def _generation_stage_with_context_save(self, context: Dict[str, Any]) -> str:
+        """
+        Wrapper for generation stage that saves context for API access
+        """
+        result = self._generation_stage(context)
+        # Save the context for API access
+        self._last_context = context.copy()
+        return result
+    
     def _generate_web_recommendations(self, songs: List[Dict[str, Any]], context: Dict[str, Any]) -> str:
         """
         生成全网搜索结果的深度推荐
@@ -950,11 +962,22 @@ class MusicAgent:
             
             # Execute main chain
             result = self.main_chain.invoke(user_input)
+            
+            # Store the last context for API access
+            self._last_context = getattr(self.main_chain, '_last_context', {})
+            
             return result
             
         except Exception as e:
             print(f"❌ 推荐过程出现错误: {e}")
             return "抱歉，音乐推荐过程中出现了问题，请稍后重试。"
+    
+    def get_last_context(self) -> Dict[str, Any]:
+        """
+        Get the context from the last recommendation request
+        For API use to access structured data
+        """
+        return getattr(self, '_last_context', {})
     
     def get_agent_info(self) -> Dict[str, Any]:
         """Get information about the agent configuration"""
