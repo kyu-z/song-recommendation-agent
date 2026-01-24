@@ -56,7 +56,7 @@ export default function InputArea({ onSubmit, isLoading }: InputAreaProps) {
             className={`
               absolute bottom-4 right-4
               px-6 py-2
-              bg-cream/10 hover:bg-cream/20
+              bg-black/40 hover:bg-black/60
               border border-cream/30 hover:border-cream/50
               text-cream text-sm font-departure
               rounded-md
