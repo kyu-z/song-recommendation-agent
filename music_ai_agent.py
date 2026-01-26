@@ -154,32 +154,52 @@ class MusicAgent:
             context['is_image'] = True
             
             # 图片意图理解
-            vision_prompt = f"""你是顶级音乐专家，将图片的视觉意境转化为精准的英文音乐搜索术语。
+            vision_prompt = """You are a music curator with deep cultural knowledge and excellent visual recognition skills. Analyze this image and determine what type of music would best match.
 
-规则：
-- 去掉主观形容词，提取核心音乐概念
-- 使用标准英文音乐术语
-- 保持简洁：最多2-3个核心词
+FIRST: Try to identify specific elements:
+- Is this from a specific anime, game, movie, or TV show? (Name it!)
+- Are there recognizable characters? (Name them!)
+- Is this a specific location, brand, or cultural reference?
+- What specific activity or context is shown?
 
-基于这张图片，你会搜索什么类型的音乐？
+THEN: Determine appropriate music based on your identification:
+- If you recognize a specific work (anime/game/movie), prioritize music FROM that work
+- If you identify characters, consider their associated soundtracks/themes
+- If it's a general scene, think about functional music needs
 
-输出格式：{{"search_goal": "精准英文搜索词"}}
+Examples of SPECIFIC thinking:
+- Pokemon characters → "Pokemon soundtrack", "Pokemon theme songs"
+- Love Live characters → "Love Live songs", "idol anime music"  
+- Studio Ghibli scene → "Studio Ghibli soundtrack", "Ghibli music"
+- Zelda imagery → "Legend of Zelda music", "game soundtrack"
+- Beach with no specific references → "beach music", "summer hits"
 
-不要解释，只要最准确的英文术语！"""
-            
+Output format: {"identification": "What specific thing did you recognize, or general scene if nothing specific", "search_goal": "The most appropriate music search term based on your identification"}
+
+Analyze the image with focus on SPECIFIC recognition first:"""
             try:
                 analysis_result = self.model_manager.invoke_vision(user_input, vision_prompt)
                 
                 # 解析JSON响应
                 json_match = re.search(r'\{.*\}', analysis_result, re.DOTALL)
                 if json_match:
+                    print(f"🖼️  [调试] 找到JSON: {json_match.group()}")
                     parsed = json.loads(json_match.group())
-                    context['search_goal'] = parsed.get('search_goal', '').strip()
+                    raw_search_goal = parsed.get('search_goal', '').strip()
+                    
+                    # 清理搜索词：取逗号前的主要部分，去除冗余描述
+                    if ',' in raw_search_goal:
+                        # 如果有逗号，取第一部分（通常是最精确的）
+                        context['search_goal'] = raw_search_goal.split(',')[0].strip()
+                    else:
+                        context['search_goal'] = raw_search_goal
+                        
+                    print(f"🖼️  [视觉感知] 原始: {raw_search_goal}")
+                    print(f"🖼️  [视觉感知] 清理后: {context['search_goal']}")
                 else:
+                    print(f"🖼️  [调试] 未找到JSON，使用备用词汇")
                     # 备用：从响应中提取
                     context['search_goal'] = "atmospheric instrumental"
-                
-                print(f"🖼️  [视觉感知] 搜索目标: {context['search_goal']}")
                 
             except Exception as e:
                 print(f"⚠️  Vision analysis failed: {e}")
@@ -222,25 +242,38 @@ class MusicAgent:
                 print(f"⚠️  Text analysis failed: {e}")
                 context['search_goal'] = user_input.strip()
         
+        print(f"🎯 [调试] 最终context: {context}")
         return context
     
     def _generate_discovery_queries(self, context: Dict[str, Any]) -> List[str]:
         """
-        极简搜索词生成 - 基于精准英文术语
+        智能搜索词生成 - 根据精确度采用不同策略
         """
         goal = context.get('search_goal', '')
         
         if not goal:
             return ["atmospheric music recommendations reddit"]
         
-        # 经典优先策略：优先推荐代表性作品而非小众发现
-        queries = [
-            f"{goal} essential",
-            f"best {goal}",
-            f"must hear {goal} songs iconic tracks"
-        ]
+        # 检测是否为精确搜索词（包含具体作品名）
+        specific_indicators = ['Love Live', 'Pokemon', 'Ghibli', 'Zelda', 'anime', 'soundtrack', 'OST', 'theme']
+        is_specific = any(indicator.lower() in goal.lower() for indicator in specific_indicators)
         
-        print(f"🎯 [搜索词生成] 基于术语: {goal}")
+        if is_specific:
+            # 精确搜索：直接使用原词汇和简单变体
+            queries = [
+                goal,  # 原搜索词
+                f"{goal} playlist",  # 播放列表
+                f"{goal} collection"  # 合集
+            ]
+        else:
+            # 泛化搜索：使用传统的修饰词策略
+            queries = [
+                f"{goal} essential",
+                f"best {goal}",
+                f"must hear {goal} songs"
+            ]
+        
+        print(f"🎯 [搜索词生成] 基于术语: {goal} ({'精确' if is_specific else '泛化'})")
         
         return queries
     
@@ -272,7 +305,10 @@ class MusicAgent:
                 except Exception as e:
                     print(f"⚠️  Search failed for '{query}': {e}")
             
+            print(f"🔍 [调试] 总共收集到 {len(all_search_results)} 个搜索结果")
             if not all_search_results:
+                print("🔍 [调试] 没有任何搜索结果，提前返回")
+                return []
                 return []
             
             # AI从文字中提取歌曲信息
@@ -338,7 +374,8 @@ class MusicAgent:
                 
                 return valid_songs[:5]  # 最多返回5首
             else:
-                print("⚠️  无法解析歌曲提取结果")
+                print("⚠️  [调试] 无法解析歌曲提取结果，未找到JSON数组")
+                print(f"⚠️  [调试] 完整响应: {response}")
                 return []
                 
         except Exception as e:
