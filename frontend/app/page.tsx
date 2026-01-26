@@ -27,18 +27,32 @@ export default function Home() {
   const [response, setResponse] = useState<ResponseData | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const handleSubmit = async (input: string) => {
+  const handleSubmit = async (input: string | File) => {
     setIsLoading(true)
     setError(null)
     
     try {
-      const apiResponse = await fetch('http://localhost:8000/recommend', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ user_input: input }),
-      })
+      let apiResponse: Response
+      
+      if (typeof input === 'string') {
+        // Text input
+        apiResponse = await fetch('http://localhost:8000/recommend', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ user_input: input }),
+        })
+      } else {
+        // File input (image)
+        const formData = new FormData()
+        formData.append('image', input)
+        
+        apiResponse = await fetch('http://localhost:8000/recommend/image', {
+          method: 'POST',
+          body: formData,
+        })
+      }
 
       if (!apiResponse.ok) {
         throw new Error(`HTTP error! status: ${apiResponse.status}`)

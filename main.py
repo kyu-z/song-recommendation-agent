@@ -1,10 +1,13 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 import logging
 import re
 import json
+import os
+import tempfile
+import shutil
 
 # Import your MusicAgent
 from music_ai_agent import MusicAgent
@@ -50,6 +53,7 @@ class RecommendationResponse(BaseModel):
     songs: List[Song]
     message: Optional[str] = None
     total_found: int
+    original_input: Optional[str] = None
 
 def parse_recommendation_text(recommendation_text: str, found_songs: List[Dict[str, Any]] = None) -> List[Song]:
     """
@@ -154,7 +158,7 @@ async def startup_event():
 
 @app.post("/recommend", response_model=RecommendationResponse)
 async def get_recommendation(request: RecommendationRequest):
-    """Get music recommendation"""
+    """Get music recommendation from text input"""
     if not music_agent:
         raise HTTPException(status_code=503, detail="MusicAgent not initialized")
     
@@ -185,13 +189,85 @@ async def get_recommendation(request: RecommendationRequest):
             success=True,
             search_goal=search_goal,
             songs=songs,
-            message="推荐成功",
-            total_found=len(songs)
+            message=f"成功推荐 {len(songs)} 首歌曲",
+            total_found=len(songs),
+            original_input=request.user_input
         )
     
     except Exception as e:
-        logger.error(f"❌ Error processing recommendation: {e}")
-        raise HTTPException(status_code=500, detail=f"推荐处理失败: {str(e)}")
+        logger.error(f"❌ Recommendation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/recommend/image", response_model=RecommendationResponse)
+async def get_recommendation_from_image(image: UploadFile = File(...)):
+    """Get music recommendation from image input"""
+    if not music_agent:
+        raise HTTPException(status_code=503, detail="MusicAgent not initialized")
+    
+    # Validate image file
+    if not image.content_type or not image.content_type.startswith('image/'):
+        raise HTTPException(status_code=400, detail="请上传图片文件")
+    
+    if image.content_type not in ['image/jpeg', 'image/jpg', 'image/png']:
+        raise HTTPException(status_code=400, detail="仅支持 JPG, JPEG, PNG 格式")
+    
+    # Create temporary file for the image
+    temp_dir = tempfile.mkdtemp()
+    temp_file_path = None
+    
+    try:
+        # Save uploaded image to temporary file
+        file_extension = os.path.splitext(image.filename or 'image.jpg')[1]
+        temp_file_path = os.path.join(temp_dir, f"uploaded_image{file_extension}")
+        
+        with open(temp_file_path, "wb") as buffer:
+            shutil.copyfileobj(image.file, buffer)
+        
+        logger.info(f"🖼️ Processing image recommendation: {image.filename}")
+        
+        # Get recommendation from agent using image path
+        recommendation_text = music_agent.get_recommendation(temp_file_path)
+        
+        # Get the structured context data
+        context = music_agent.get_last_context()
+        found_songs = context.get('found_songs', [])
+        search_goal = context.get('search_goal')
+        image_analysis = context.get('image_analysis')
+        
+        # Parse the recommendation text into structured data
+        songs = parse_recommendation_text(recommendation_text, found_songs)
+        
+        if not songs:
+            return RecommendationResponse(
+                success=False,
+                search_goal=search_goal,
+                songs=[],
+                message="未找到匹配图片意境的音乐",
+                total_found=0
+            )
+        
+        return RecommendationResponse(
+            success=True,
+            search_goal=search_goal,
+            songs=songs,
+            message=f"根据图片意境推荐 {len(songs)} 首歌曲",
+            total_found=len(songs),
+            original_input=f"图片分析: {image_analysis}" if image_analysis else f"图片文件: {image.filename}"
+        )
+    
+    except Exception as e:
+        logger.error(f"❌ Image recommendation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+    finally:
+        # Clean up temporary file
+        try:
+            if temp_file_path and os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+            if os.path.exists(temp_dir):
+                os.rmdir(temp_dir)
+        except Exception as cleanup_error:
+            logger.warning(f"⚠️ Failed to cleanup temp file: {cleanup_error}")
 
 # Add startup event to initialize agent
 @app.on_event("startup")
