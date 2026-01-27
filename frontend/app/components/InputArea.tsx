@@ -56,40 +56,22 @@ export default function InputArea({ onSubmit, isLoading }: InputAreaProps) {
     <div className="w-full max-w-4xl mx-auto px-6 py-8">
       {/* 模式切换按钮 */}
       <div className="flex justify-center mb-6">
-        <div className="flex bg-cream/5 rounded-lg p-1 glass-effect border border-cream/20">
-          <button
-            type="button"
-            onClick={switchToText}
-            disabled={isLoading}
-            className={`
-              mode-switch-button px-6 py-2 rounded-md font-departure text-sm
-              transition-all duration-300
-              disabled:opacity-50 disabled:cursor-not-allowed
-              ${mode === 'text' 
-                ? 'bg-cream/20 text-cream border border-cream/40' 
-                : 'text-cream/70 hover:text-cream hover:bg-cream/10'
-              }
-            `}
-          >
-            📝 文字输入
-          </button>
-          <button
-            type="button"
-            onClick={switchToImage}
-            disabled={isLoading}
-            className={`
-              mode-switch-button px-6 py-2 rounded-md font-departure text-sm
-              transition-all duration-300
-              disabled:opacity-50 disabled:cursor-not-allowed
-              ${mode === 'image' 
-                ? 'bg-cream/20 text-cream border border-cream/40' 
-                : 'text-cream/70 hover:text-cream hover:bg-cream/10'
-              }
-            `}
-          >
-            📷 图片输入
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={mode === 'text' ? switchToImage : switchToText}
+          disabled={isLoading}
+          className="
+            px-6 py-2 rounded-lg font-departure text-sm
+            bg-cream/10 hover:bg-cream/20
+            border border-cream/30 hover:border-cream/50
+            text-cream
+            transition-all duration-300
+            disabled:opacity-50 disabled:cursor-not-allowed
+            backdrop-blur-sm
+          "
+        >
+          {mode === 'text' ? '图片输入' : '文字输入'}
+        </button>
       </div>
 
       {/* 输入区域 */}
@@ -124,9 +106,9 @@ export default function InputArea({ onSubmit, isLoading }: InputAreaProps) {
                 className={`
                   absolute bottom-4 right-4
                   px-6 py-2
-                  bg-cream/20 hover:bg-cream/40
-                  border border-cream/50 hover:border-cream/80
-                  text-cream text-sm font-departure
+                  bg-cream/20 hover:bg-cream/5
+                  border border-cream/30 hover:border-cream/80
+                  text-pure-black text-sm font-departure
                   rounded-md
                   transition-all duration-200
                   disabled:opacity-30 disabled:cursor-not-allowed
@@ -175,7 +157,7 @@ export default function InputArea({ onSubmit, isLoading }: InputAreaProps) {
                     backdrop-blur-sm
                   `}
                 >
-                  {isLoading ? 'Analyzing...' : '🎵 分析图片推荐音乐'}
+                  {isLoading ? 'Analyzing...' : '分析图片推荐音乐'}
                 </button>
               </div>
             )}

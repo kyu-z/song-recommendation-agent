@@ -76,8 +76,8 @@ export default function ImageUploadArea({
 
         {/* 文件信息 */}
         <div className="text-cream/70 text-sm font-departure">
-          <p>📁 {selectedImage.name}</p>
-          <p>📊 {(selectedImage.size / 1024 / 1024).toFixed(2)} MB</p>
+          <p>文件: {selectedImage.name}</p>
+          <p>大小: {(selectedImage.size / 1024 / 1024).toFixed(2)} MB</p>
         </div>
       </div>
     )
@@ -101,7 +101,7 @@ export default function ImageUploadArea({
         <div className="space-y-4">
           {/* 图标 */}
           <div className="text-4xl text-cream/60">
-            📷
+            +
           </div>
           
           {/* 主要文字 */}
@@ -134,7 +134,7 @@ export default function ImageUploadArea({
               backdrop-blur-sm
             "
           >
-            📂 浏览文件
+            浏览文件
           </button>
         </div>
       </div>
