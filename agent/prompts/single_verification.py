@@ -20,6 +20,7 @@ def get_single_clue_verification_prompt(song: str, artist: str, search_results: 
     return f"""Verify and enhance this single song clue using YouTube search results.
 
 **Target Song**: "{song}" by {artist}
+**Provided Artist**: "{artist}" (Note: This might be incorrect, use your knowledge to verify)
 **Expected Region**: {origin_region}
 
 **YouTube Search Results**:
@@ -29,7 +30,11 @@ def get_single_clue_verification_prompt(song: str, artist: str, search_results: 
 1. Find the BEST official YouTube link for this exact song
 2. Gather context information about the song (chart performance, significance, style)
 3. Determine if this is an official release (not cover/remix/fan-made)
-4. Identify artist's nationality based on your knowledge
+4. **Identity Correction**: Based on your internal knowledge, who is the ACTUAL artist of the song "{song}"? 
+   - If the provided artist "{artist}" is a voice actor, a franchise name, or just wrong, REPLACE it with the correct original artist (e.g., Change "Miyamoto Yoshiko" to "7!!" if it's the Naruto theme).
+5. **YouTube Alignment**: Look at the search results below. Find the link that matches the REAL artist you identified in step 4.
+6. **Data Enrichment**: Fill in the nationality and background for the CORRECT artist.
+
 
 **QUALITY STANDARDS**:
 - Prefer Official MVs > Topic Channels > Audio Only > Live Performances  
@@ -39,7 +44,7 @@ def get_single_clue_verification_prompt(song: str, artist: str, search_results: 
 **OUTPUT FORMAT** (JSON only):
 {{
   "song": "{song}",
-  "artist": "{artist}",
+  "artist": "CORRECT_ARTIST_NAME",
   "context": "Detailed background about this song (chart success, cultural impact, musical style, etc.)",
   "official_link": "https://youtube.com/watch?v=...",
   "platform": "YouTube",

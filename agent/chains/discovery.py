@@ -714,7 +714,7 @@ class DiscoveryChain:
     async def _verify_clues_parallel(self, clues: List[Dict[str, str]], context: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Stage 2: Verify clues in parallel with early exit"""
         verified_songs = []
-        target_count = min(5, len(clues))  # Target 5 songs max
+        target_count = 5  # Target 5 songs max
         
         print(f"Starting parallel verification of {len(clues)} clues...")
         
@@ -726,26 +726,23 @@ class DiscoveryChain:
         
         # Create tasks with staggered delays to avoid rate limiting
         tasks = []
-        for i, clue in enumerate(clues):
+        for i, clue in enumerate(clues[:10]):
             delay = i * 1.5  # 1.5 second delay between requests
             task = verify_with_delay(clue, delay)
             tasks.append(task)
         
         try:
             # Wait for all tasks to complete (with timeout)
-            results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=60)
-            
-            # Process results
-            for i, result in enumerate(results):
-                if isinstance(result, dict) and result.get('song'):
+            for task in asyncio.as_completed(tasks, timeout=45):
+                result = await task
+                if isinstance(result, dict) and result.get('official_link'):
                     verified_songs.append(result)
-                    print(f"Verified {len(verified_songs)}: {result['song']} by {result['artist']}")
+                    print(f"✅ 已验证第 {len(verified_songs)} 首: {result['song']}")
                     
+                    # 核心：够了就走
                     if len(verified_songs) >= target_count:
-                        print(f"Reached target {target_count} songs")
-                        break
-                elif isinstance(result, Exception):
-                    print(f"Verification task {i+1} failed: {result}")
+                        print(f"⚡ 已达到目标数量 {target_count}，正在停止其余任务并返回...")
+                        return verified_songs
                     
         except asyncio.TimeoutError:
             print("Verification timeout - using partial results")
@@ -759,31 +756,36 @@ class DiscoveryChain:
         try:
             # Search for YouTube link
             if self.brave_search:
-                search_query = f"site:youtube.com {artist} {song} official"
+                refined_goal = context.get('refined_query', context.get('search_goal', ''))
+                search_query = f"site:youtube.com {song} {artist} {refined_goal} official music"
+                search_query = search_query[:120] 
+                print(f"🔍 [YouTube Search] Query: {search_query}") # 打印出来方便你调试
                 search_results = await asyncio.to_thread(self.brave_search.run, search_query, 5)
             else:
                 search_results = ""
-            
+
             # AI verification
             verification_prompt = get_single_clue_verification_prompt(song, artist, search_results, context)
             response = await asyncio.to_thread(self.model_manager.invoke_text, verification_prompt)
-            
+
             # Enhanced parsing with multiple fallback attempts
             if response and response.strip().lower() != 'null':
                 # Attempt 1: Standard cleaning
                 try:
                     cleaned_response = self._clean_json_string(response)
                     verified_data = json.loads(cleaned_response)
-                    
                     if verified_data.get('song') and verified_data.get('artist'):
+                        if verified_data['artist'].strip().lower() != artist.strip().lower():
+                            print(f"[AI Artist Correction] '{artist}' → '{verified_data['artist']}' for song '{song}'")
                         return verified_data
                 except json.JSONDecodeError as e1:
                     # Attempt 2: Aggressive cleaning
                     try:
                         aggressively_cleaned = self._aggressive_json_clean(response)
                         verified_data = json.loads(aggressively_cleaned)
-                        
                         if verified_data.get('song') and verified_data.get('artist'):
+                            if verified_data['artist'].strip().lower() != artist.strip().lower():
+                                print(f"[AI Artist Correction] '{artist}' → '{verified_data['artist']}' for song '{song}' (aggressive)")
                             print(f"🔧 [Aggressive parsing] Succeeded for {song} by {artist}")
                             return verified_data
                     except json.JSONDecodeError as e2:
@@ -793,6 +795,8 @@ class DiscoveryChain:
                             if manual_json:
                                 verified_data = json.loads(manual_json)
                                 if verified_data.get('song') and verified_data.get('artist'):
+                                    if verified_data['artist'].strip().lower() != artist.strip().lower():
+                                        print(f"[AI Artist Correction] '{artist}' → '{verified_data['artist']}' for song '{song}' (manual)")
                                     print(f"🔧 [Manual extraction] Succeeded for {song} by {artist}")
                                     return verified_data
                         except json.JSONDecodeError as e3:
@@ -801,16 +805,13 @@ class DiscoveryChain:
                             if fallback_data:
                                 print(f"🔧 [Fallback construction] Used for {song} by {artist}")
                                 return fallback_data
-                            
                             # All attempts failed - log for debugging
                             print(f"❌ [JSON Parse Failure] {song} by {artist}")
                             print(f"   Original response: {response[:200]}...")
                             print(f"   Standard clean error: {e1}")
                             print(f"   Aggressive clean error: {e2}")
                             print(f"   Manual extract error: {e3}")
-            
             return None
-            
         except Exception as e:
             print(f"Single clue verification failed for {song} by {artist}: {e}")
             return None
