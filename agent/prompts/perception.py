@@ -46,11 +46,14 @@ Your tasks:
 3. **Search Strategy**: Generate both international and localized search terms
    - For Asian artists: prioritize native name + local keywords
    - For genres: include region-specific terminology
+   - **For specific years**: Use precise chart/release terminology (e.g., "K-Pop hits 2010 chart" instead of "2010 K-Pop music")
 
 Classification examples:
 - "我想听TWICE" → origin_region: "Korea", native_name: "트와이스", refined_query: "TWICE korean pop"
 - "郑宜农的歌" → origin_region: "Greater China", native_name: "郑宜农", refined_query: "郑宜农 台湾独立音乐"
 - "j-pop推荐" → origin_region: "Japan", native_name: null, refined_query: "japanese pop music"
+- "2010年的kpop" → origin_region: "Korea", refined_query: "K-Pop hits 2010 chart best songs released"
+- "2015年日本流行音乐" → origin_region: "Japan", refined_query: "J-Pop chart 2015 Oricon annual ranking"
 
 Output ONLY valid JSON:
 {{

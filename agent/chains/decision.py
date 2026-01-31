@@ -28,9 +28,9 @@ class DecisionChain:
         discovered_songs = context.get('found_songs', [])
         
         if discovered_songs:
-            # Find sources for songs
-            candidate_results = self._source_finding_phase(discovered_songs, context)
-            print(f"🎯 [Source Finding] 找到 {len(candidate_results)} 个候选结果")
+            # Find sources for songs with automatic YouTube search
+            candidate_results = self._automatic_source_finding(discovered_songs, context)
+            print(f"🎯 [Auto Source Finding] 找到 {len(candidate_results)} 个候选结果")
             
             # Apply hard filtering
             filtered_results = self._apply_hard_filters(candidate_results, context)
@@ -40,12 +40,22 @@ class DecisionChain:
             final_results = self._rank_by_officialness(filtered_results, context)
             print(f"⭐ [Ranking] 最终排序 {len(final_results)} 个结果")
             
-            context['found_songs'] = final_results
+            # Apply deduplication and selection
+            deduplicated_results = self._deduplicate_and_select_best(final_results)
+            print(f"🎯 [去重精选] 最终输出 {len(deduplicated_results)} 首歌曲")
             
-            if final_results:
-                print(f"✅ [决策] 选择了 {len(final_results)} 首高质量歌曲")
+            context['found_songs'] = deduplicated_results
+            
+            if deduplicated_results:
+                print(f"✅ [决策] 最终选择了 {len(deduplicated_results)} 首高质量歌曲")
+                
+                # Debug: log final song structure
+                for i, song in enumerate(deduplicated_results[:3], 1):  # Show first 3
+                    print(f"🎯 [最终歌曲 {i}] {song.get('artist', 'N/A')} - {song.get('song', 'N/A')}")
+                    print(f"   🔗 官方链接: {song.get('official_link', 'None')}")
+                    print(f"   📝 匹配原因: {song.get('match_reason', 'None')}")
             else:
-                print("❌ [决策] 硬过滤后没有符合要求的歌曲")
+                print("❌ [决策] 去重后没有符合要求的歌曲")
         else:
             print("❌ [检索失败] 全网搜索未找到合适的音乐")
             print("❌ [决策] 没有歌曲可选择")
@@ -166,6 +176,250 @@ class DecisionChain:
             print(f"  {i+1}. {candidate.get('song', 'N/A')} - Score: {score:.1f}")
         
         return ranked[:10]  # Return top 10
+    
+    def _automatic_source_finding(self, discovered_songs: List[Dict[str, Any]], context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Automatically find official YouTube sources for discovered songs"""
+        results = []
+        
+        for song_info in discovered_songs:
+            artist = song_info.get('artist', '')
+            song = song_info.get('song', '')
+            
+            if not artist or not song:
+                continue
+                
+            print(f"🎵 [自动音源] 搜索: {artist} - {song}")
+            
+            # Generate official audio search query
+            search_query = f"{artist} {song} official audio"
+            
+            try:
+                # Use Brave Search to find YouTube links
+                if self.brave_search:
+                    search_results = self.brave_search.run(f"site:youtube.com {search_query}")
+                    
+                    # Extract YouTube links and validate them
+                    youtube_candidates = self._extract_youtube_links(search_results)
+                    validated_candidates = self._validate_youtube_sources(youtube_candidates, artist, song)
+                    
+                    # Add validated candidates to results
+                    for candidate in validated_candidates:
+                        result = {
+                            **song_info,  # Preserve original metadata
+                            'youtube_url': candidate['url'],  # Keep original field for processing
+                            'youtube_title': candidate['title'],
+                            'duration': candidate.get('duration', 'unknown'),
+                            'validation_score': candidate.get('score', 50),
+                            'source_type': 'youtube_auto'
+                        }
+                        results.append(result)
+                        
+                    print(f"🎵 [自动音源] {artist} - {song}: 找到 {len(validated_candidates)} 个候选")
+                else:
+                    print("⚠️  Brave Search not available for source finding")
+                    # Add song without YouTube link
+                    results.append({
+                        **song_info,
+                        'youtube_url': None,
+                        'source_type': 'no_source'
+                    })
+                
+                # Rate limiting
+                time.sleep(1)
+                
+            except Exception as e:
+                print(f"⚠️  [自动音源] 搜索失败 {artist} - {song}: {e}")
+                results.append({
+                    **song_info,
+                    'youtube_url': None,
+                    'source_type': 'search_failed'
+                })
+        
+        return results
+    
+    def _extract_youtube_links(self, search_results: str) -> List[Dict[str, Any]]:
+        """Extract YouTube video information from search results"""
+        candidates = []
+        
+        # Simple regex to find YouTube URLs and titles
+        # This is a basic implementation - in production you'd want more robust parsing
+        youtube_pattern = r'https://(?:www\.)?youtube\.com/watch\?v=([a-zA-Z0-9_-]+)'
+        urls = re.findall(youtube_pattern, search_results)
+        
+        for video_id in urls[:5]:  # Limit to top 5 results
+            url = f"https://www.youtube.com/watch?v={video_id}"
+            
+            # Try to extract title from surrounding text
+            title_pattern = rf'.*?(.*?){re.escape(url)}.*?'
+            title_match = re.search(title_pattern, search_results, re.IGNORECASE)
+            title = title_match.group(1).strip() if title_match else f"Video {video_id}"
+            
+            candidates.append({
+                'url': url,
+                'title': title,
+                'video_id': video_id
+            })
+        
+        return candidates
+    
+    def _validate_youtube_sources(self, candidates: List[Dict[str, Any]], artist: str, song: str) -> List[Dict[str, Any]]:
+        """Validate YouTube sources using title analysis and blacklist filtering"""
+        if not candidates:
+            return []
+        
+        # Blacklist keywords for filtering
+        BLACKLIST_KEYWORDS = [
+            'cover', 'reaction', 'remix', 'nightcore', 'slowed',
+            'reverb', 'tutorial', 'how to', 'karaoke', 'instrumental version',
+            'fan made', 'amateur', 'bootleg', 'live stream', 'compilation'
+        ]
+        
+        # Official indicators for scoring
+        OFFICIAL_KEYWORDS = [
+            'official', 'vevo', 'topic', 'records', 'music', 'entertainment',
+            'official audio', 'official video', 'official mv'
+        ]
+        
+        validated = []
+        
+        for candidate in candidates:
+            title = candidate['title'].lower()
+            url = candidate['url']
+            score = 50  # Base score
+            
+            # Check for blacklist keywords
+            is_blacklisted = any(keyword in title for keyword in BLACKLIST_KEYWORDS)
+            if is_blacklisted:
+                print(f"🛡️ [黑名单过滤] {title[:50]}...")
+                continue
+            
+            # Check for official indicators
+            official_bonus = 0
+            for keyword in OFFICIAL_KEYWORDS:
+                if keyword in title:
+                    official_bonus += 20
+                    break
+            
+            # Check if title contains both artist and song name
+            artist_match = artist.lower() in title
+            song_match = song.lower() in title
+            
+            if artist_match and song_match:
+                score += 30
+            elif artist_match or song_match:
+                score += 15
+            
+            score += official_bonus
+            
+            # Duration validation would go here in a full implementation
+            # For now, we'll use a placeholder
+            candidate['score'] = min(100, max(0, score))
+            candidate['duration'] = 'unknown'  # Would extract from API
+            
+            validated.append(candidate)
+            print(f"✅ [验证通过] {title[:50]}... (Score: {candidate['score']})")
+        
+        # Sort by score (highest first)
+        validated.sort(key=lambda x: x.get('score', 0), reverse=True)
+        
+        return validated[:2]  # Return top 2 candidates per song
+    
+    def _deduplicate_and_select_best(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """去重并为每首歌选择最佳链接"""
+        if not results:
+            return []
+        
+        # Group by song identity (artist + song name)
+        song_groups = {}
+        
+        for result in results:
+            artist = result.get('artist', '').strip().lower()
+            song = result.get('song', '').strip().lower()
+            
+            # Create unique key for the song
+            song_key = f"{artist}|||{song}"
+            
+            if song_key not in song_groups:
+                song_groups[song_key] = []
+            
+            song_groups[song_key].append(result)
+        
+        print(f"🎯 [去重分组] 发现 {len(song_groups)} 个独特歌曲组")
+        
+        # Select best version for each song
+        final_songs = []
+        
+        for song_key, candidates in song_groups.items():
+            print(f"🎯 [处理组] {song_key}: {len(candidates)} 个候选")
+            
+            # Sort candidates by validation score (highest first)
+            candidates.sort(key=lambda x: x.get('validation_score', 0), reverse=True)
+            best_candidate = candidates[0]
+            
+            # Standardize the output structure
+            standardized_song = {
+                'song': best_candidate.get('song', '').strip(),
+                'artist': best_candidate.get('artist', '').strip(),
+                'official_link': self._extract_official_link(best_candidate),
+                'match_reason': self._generate_match_reason(best_candidate),
+                'context': best_candidate.get('context', ''),
+                'is_official_release': best_candidate.get('is_official_release', True),
+                'artist_nationality': best_candidate.get('artist_nationality', 'unknown'),
+                'validation_score': best_candidate.get('validation_score', 0)
+            }
+            
+            final_songs.append(standardized_song)
+            
+            print(f"✅ [最佳选择] {standardized_song['artist']} - {standardized_song['song']}")
+            print(f"   📝 推荐理由: {standardized_song['context']}")
+            if standardized_song['official_link']:
+                print(f"   🔗 链接: {standardized_song['official_link']}")
+            print(f"   ⭐ 评分: {standardized_song['validation_score']}")
+        
+        # Sort final results by validation score and limit to reasonable number
+        final_songs.sort(key=lambda x: x.get('validation_score', 0), reverse=True)
+        
+        return final_songs[:8]  # Return top 8 unique songs
+    
+    def _extract_official_link(self, candidate: Dict[str, Any]) -> str:
+        """提取官方链接"""
+        # Check various possible link fields
+        possible_fields = ['youtube_url', 'official_link', 'url', 'link']
+        
+        for field in possible_fields:
+            link = candidate.get(field)
+            if link and isinstance(link, str) and link.strip():
+                return link.strip()
+        
+        return ""
+    
+    def _generate_match_reason(self, candidate: Dict[str, Any]) -> str:
+        """生成匹配原因"""
+        reasons = []
+        
+        # Check source type
+        source_type = candidate.get('source_type', '')
+        if source_type == 'youtube_auto':
+            reasons.append("自动音源匹配")
+        elif source_type == 'discovery':
+            reasons.append("发现阶段提取")
+        
+        # Check official status
+        if candidate.get('is_official_release', False):
+            reasons.append("官方发行")
+        
+        # Check validation score
+        score = candidate.get('validation_score', 0)
+        if score >= 80:
+            reasons.append("高质量匹配")
+        elif score >= 60:
+            reasons.append("良好匹配")
+        
+        # Check if has official link
+        if self._extract_official_link(candidate):
+            reasons.append("包含播放链接")
+        
+        return " | ".join(reasons) if reasons else "基础匹配"
     
     def _source_finding_phase(self, discovered_songs: List[Dict[str, Any]], context: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Find official sources for discovered songs"""

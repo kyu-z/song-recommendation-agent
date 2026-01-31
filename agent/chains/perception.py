@@ -150,7 +150,9 @@ class PerceptionChain:
         
         # Set basic values
         context['search_goal'] = text_input.strip()
-        context['refined_query'] = cleaned
+        
+        # Enhanced refined_query with year detection
+        context['refined_query'] = self._enhance_query_with_year_detection(cleaned)
         
         # Simple heuristics for classification
         specific_indicators = ['anime', 'pokemon', 'zelda', 'ghibli', 'ost', 'soundtrack', 'theme']
@@ -176,6 +178,44 @@ class PerceptionChain:
         else:
             context['music_type'] = 'pop'  # Default to pop
         
+        # Basic region detection for search strategy
+        if any(word in cleaned for word in ['kpop', 'k-pop', 'korean', '韩国']):
+            context['origin_region'] = 'Korea'
+        elif any(word in cleaned for word in ['jpop', 'j-pop', 'japanese', '日本']):
+            context['origin_region'] = 'Japan'
+        elif any(word in cleaned for word in ['cpop', 'c-pop', 'chinese', '中文', '华语']):
+            context['origin_region'] = 'Greater China'
+        else:
+            context['origin_region'] = 'Western'
+            
+        context['search_strategy'] = 'international'
+        context['native_name'] = None
+        
         print(f"📝 [简单回退] 分类结果: specific={context['is_specific']}, vocal={context['vocal_type']}, type={context['music_type']}")
         
         return context
+    
+    def _enhance_query_with_year_detection(self, cleaned_input: str) -> str:
+        """Enhanced query generation with year-specific optimization"""
+        # Detect year patterns
+        year_pattern = r'\b(19\d{2}|20\d{2})\b'
+        year_matches = re.findall(year_pattern, cleaned_input)
+        
+        if year_matches:
+            year = year_matches[0]
+            print(f"📝 [年份检测] 发现年份: {year}")
+            
+            # Genre-specific year query enhancement
+            if any(word in cleaned_input for word in ['kpop', 'k-pop', 'korean']):
+                return f"K-Pop hits {year} chart best songs released Korean music"
+            elif any(word in cleaned_input for word in ['jpop', 'j-pop', 'japanese']):
+                return f"J-Pop chart {year} Oricon annual ranking Japanese hits"
+            elif any(word in cleaned_input for word in ['cpop', 'c-pop', 'chinese', 'mandarin']):
+                return f"C-Pop {year} Chinese music chart hits Mandarin songs"
+            elif any(word in cleaned_input for word in ['pop', 'music', 'hits']):
+                return f"Billboard Hot 100 {year} chart top songs year-end"
+            else:
+                return f"music hits {year} chart annual best songs"
+        
+        # No year detected, return cleaned input
+        return cleaned_input
