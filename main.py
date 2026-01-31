@@ -166,12 +166,12 @@ async def get_recommendation(request: RecommendationRequest):
         logger.info(f"🎵 Processing recommendation request: {request.user_input}")
         
         # Get recommendation from agent
-        recommendation_text = music_agent.get_recommendation(request.user_input)
+        result = music_agent.recommend(request.user_input)
         
-        # Get the structured context data
-        context = music_agent.get_last_context()
-        found_songs = context.get('found_songs', [])
-        search_goal = context.get('search_goal')
+        # Get the structured context data from result
+        found_songs = result.get('found_songs', [])
+        search_goal = result.get('search_goal')
+        recommendation_text = result.get('final_report', '')
         
         # Parse the recommendation text into structured data
         songs = parse_recommendation_text(recommendation_text, found_songs)
@@ -226,13 +226,13 @@ async def get_recommendation_from_image(image: UploadFile = File(...)):
         logger.info(f"🖼️ Processing image recommendation: {image.filename}")
         
         # Get recommendation from agent using image path
-        recommendation_text = music_agent.get_recommendation(temp_file_path)
+        result = music_agent.recommend(temp_file_path)
         
-        # Get the structured context data
-        context = music_agent.get_last_context()
-        found_songs = context.get('found_songs', [])
-        search_goal = context.get('search_goal')
-        image_analysis = context.get('image_analysis')
+        # Get the structured context data from result
+        found_songs = result.get('found_songs', [])
+        search_goal = result.get('search_goal')
+        image_analysis = result.get('image_analysis')
+        recommendation_text = result.get('final_report', '')
         
         # Parse the recommendation text into structured data
         songs = parse_recommendation_text(recommendation_text, found_songs)
