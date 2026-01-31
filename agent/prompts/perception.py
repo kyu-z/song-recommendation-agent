@@ -2,71 +2,46 @@
 Perception stage prompts for understanding user intent
 """
 
-VISION_ANALYSIS_PROMPT = """You are a music curator with deep cultural knowledge and excellent visual recognition skills. Analyze this image and determine what type of music would best match.
+VISION_ANALYSIS_PROMPT = """You are a music curator with deep cultural knowledge. Analyze this image to determine the best music match.
 
-FIRST: Try to identify specific elements:
-- Is this from a specific anime, game, movie, or TV show? (Name it!)
-- Are there recognizable characters? (Name them!)
-- Is this a specific location, brand, or cultural reference?
-- What specific activity or context is shown?
+FIRST: Identify elements using this hierarchy:
+1. **Direct IP/Work**: If it's a specific Anime, Game, Movie, or TV Show, identify the title.
+2. **Characters**: If specific characters are present, name them and their series.
+3. **Aesthetic/Genre**: If no specific IP, identify the art style (e.g., 80s Anime, Cyberpunk, Minimalist, Lo-fi) and the mood.
+4. **Cultural Context**: Identify specific real-world locations or cultural vibes (e.g., Shibuya night, Nordic nature).
 
-THEN: Determine appropriate music based on your identification:
-- If you recognize a specific work (anime/game/movie), prioritize music FROM that work
-- If you identify characters, consider their associated soundtracks/themes
-- If it's a general scene, think about functional music needs
+THEN: Determine music strategy:
+- **IP Found**: Prioritize "Original Soundtrack", "Theme songs", or "Arrangement albums" from that work.
+- **Vibe/Style Found**: Map to specific genres (e.g., "City Pop" for 80s anime, "Synthwave" for neon cities, "Ambient" for nature).
+- **Activity Found**: Suggest functional music (e.g., "Deep Focus", "Workout", "Party").
 
-Examples of SPECIFIC thinking:
-- Pokemon characters → "Pokemon soundtrack", "Pokemon theme songs"
-- Love Live characters → "Love Live songs", "idol anime music"  
-- Studio Ghibli scene → "Studio Ghibli soundtrack", "Ghibli music"
-- Zelda imagery → "Legend of Zelda music", "game soundtrack"
-- Beach with no specific references → "beach music", "summer hits"
-
-Output format: {"identification": "What specific thing did you recognize, or general scene if nothing specific", "search_goal": "The most appropriate music search term based on your identification"}
+Output format: {"identification": "Detailed analysis", "search_goal": "Clean search term", "cultural_tags": ["tag1", "tag2"]}
 
 Analyze the image with focus on SPECIFIC recognition first:"""
 
-TEXT_PROCESSING_PROMPT_TEMPLATE = """You are a specialized music curator with deep knowledge of global music markets and artist naming conventions.
+TEXT_PROCESSING_PROMPT_TEMPLATE = """You are a strategic search engineer. Analyze the user's intent: "{user_input}"
 
-User input: "{user_input}"
+Your task is to generate a search query that anchors the search to the correct cultural domain to avoid semantic drift.
 
-Your tasks:
-1. **Artist Analysis**: If an artist is mentioned, identify their origin and native language name
-   - English name → Native name: "Enno Cheng" → "郑宜农" 
-   - Romanization → Original: "Yorushika" → "ヨルシカ"
-   - Band variations: "NewJeans" → "뉴진스"
+Rules for "Refined Query":
+1. **Identify the Core Domain**: Determine the specific music world (e.g., Anime, K-Pop, Rock, Jazz, Classical).
+2. **Handle Ambiguous Adjectives**: 
+   - Words like "Classic", "Top", or "Best" are high-risk. 
+   - ALWAYS pair them with the [Domain Name] + [Format] to lock the search.
+   - Example: For "Classic Anisong", use "legendary anime theme songs ranking".
+   - Example: For "Classic Jazz", use "essential jazz standards list".
+3. **Avoid Mainstream Monopoly**: 
+   - If the domain is niche or non-Western, AVOID generic terms like "hits list" or "popular music" which lead to Billboard/Rolling Stone.
+   - Use domain-specific terminology (e.g., "OST" for Anime, "Discography" for Rock, "Comeback" for K-Pop).
 
-2. **Region Classification**: Determine the primary origin region
-   - Japan: J-Pop, Visual Kei, City Pop, etc.
-   - Korea: K-Pop, K-Indie, K-R&B, etc. 
-   - Greater China: C-Pop, Mandopop, Cantopop (Taiwan/Hong Kong/Mainland)
-   - Western: US/UK/Europe mainstream
-   - Other: Southeast Asia, Latin America, etc.
-
-3. **Search Strategy**: Generate both international and localized search terms
-   - For Asian artists: prioritize native name + local keywords
-   - For genres: include region-specific terminology
-   - **For specific years**: Use precise chart/release terminology (e.g., "K-Pop hits 2010 chart" instead of "2010 K-Pop music")
-
-Classification examples:
-- "我想听TWICE" → origin_region: "Korea", native_name: "트와이스", refined_query: "TWICE korean pop"
-- "郑宜农的歌" → origin_region: "Greater China", native_name: "郑宜农", refined_query: "郑宜农 台湾独立音乐"
-- "j-pop推荐" → origin_region: "Japan", native_name: null, refined_query: "japanese pop music"
-- "2010年的kpop" → origin_region: "Korea", refined_query: "K-Pop hits 2010 chart best songs released"
-- "2015年日本流行音乐" → origin_region: "Japan", refined_query: "J-Pop chart 2015 Oricon annual ranking"
-
-Output ONLY valid JSON:
+Output ONLY JSON:
 {{
-  "search_goal": "User-friendly display term",
-  "refined_query": "Clean English search term", 
-  "native_name": "Artist's native language name or null",
-  "origin_region": "Japan|Korea|Greater China|Western|Other|unknown",
+  "search_goal": "User-facing title",
+  "refined_query": "The domain-locked search term", 
+  "origin_region": "Japan|Korea|Greater China|Western|Other",
   "is_specific": boolean,
-  "vocal_type": "vocal|instrumental|unknown",
-  "music_type": "pop|classical|ost|ambient|unknown",
-  "search_strategy": "international|localized|hybrid"
+  "context_hint": "One professional sentence about the cultural background"
 }}"""
-
 
 def get_vision_prompt() -> str:
     """Get the vision analysis prompt template"""

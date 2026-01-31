@@ -77,7 +77,7 @@ class MusicAgent:
             self.generation_stage
         )
     
-    def recommend(self, user_input: str) -> Dict[str, Any]:
+    async def recommend(self, user_input: str) -> Dict[str, Any]:
         """
         Main recommendation interface
         
@@ -88,7 +88,11 @@ class MusicAgent:
             Complete recommendation result
         """
         try:
-            result = self.main_chain.invoke(user_input)
+            # Execute stages sequentially with async support
+            context = self._perception_stage(user_input)
+            context = await self._retrieval_stage(context)
+            context = self._decision_stage(context)
+            result = self._generation_stage_with_context_save(context)
             return result
         except Exception as e:
             print(f"❌ Recommendation failed: {e}")
@@ -103,10 +107,10 @@ class MusicAgent:
         """Stage 1: Delegate to PerceptionChain"""
         return self.perception_chain.process(user_input)
     
-    def _retrieval_stage(self, context: Dict[str, Any]) -> Dict[str, Any]:
+    async def _retrieval_stage(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Stage 2: Delegate to DiscoveryChain"""
         print("🎵 [检索阶段] 开始全网音乐搜索...")
-        return self.discovery_chain.search(context)
+        return await self.discovery_chain.search(context)
     
     def _decision_stage(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Stage 3: Delegate to DecisionChain"""

@@ -1,12 +1,14 @@
 """
-Discovery Chain - Stage 2: Music discovery and extraction
+Discovery Chain - Stage 2: Music discovery and extraction with two-stage processing
 """
+import asyncio
 import time
 import re
 import json
 import requests
-from typing import Dict, Any, List
-from ..prompts.extraction import get_extraction_prompt
+from typing import Dict, Any, List, Set, Optional, Tuple
+from ..prompts.clue_extraction import get_clue_extraction_prompt
+from ..prompts.single_verification import get_single_clue_verification_prompt
 
 
 class DiscoveryChain:
@@ -16,7 +18,7 @@ class DiscoveryChain:
         self.brave_search = brave_search
         self.model_manager = model_manager
     
-    def search(self, context: Dict[str, Any]) -> Dict[str, Any]:
+    async def search(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """
         Two-stage discovery: 1) Authority links, 2) Content parsing
         
@@ -57,10 +59,10 @@ class DiscoveryChain:
                 
                 for i, query in enumerate(general_queries):
                     if i > 0:
-                        time.sleep(1.5)  # Rate limiting
+                        await asyncio.sleep(1.5)  # Async rate limiting
                     try:
                         print(f"🔍 搜索 ({i+1}/{len(general_queries)}): {query}")
-                        results = self.brave_search.run(query)
+                        results = await asyncio.to_thread(self.brave_search.run, query)
                         all_search_results.append(results)
                     except Exception as e:
                         print(f"⚠️  Search failed for '{query}': {e}")
@@ -70,8 +72,8 @@ class DiscoveryChain:
                 print("🔍 [调试] 没有任何搜索结果，提前返回")
                 return context
             
-            # Extract songs from search results
-            discovered_songs = self._extract_songs_from_text(all_search_results, context)
+            # Extract songs from search results (now async)
+            discovered_songs = await self._extract_songs_from_text(all_search_results, context)
             print(f"✅ [Discovery] 发现 {len(discovered_songs)} 首候选歌曲")
             
             context['found_songs'] = discovered_songs
@@ -323,7 +325,81 @@ class DiscoveryChain:
                 print(f"⚠️  Information search failed: {e}")
         
         print(f"🔗 [信息链接] 找到 {len(authority_links)} 个信息源链接")
-        return authority_links[:8]  # Increased limit for better coverage
+        
+        # Apply diversity filtering before returning
+        diversified_links = self._apply_domain_diversity_filter(authority_links, max_per_domain=2, max_total=8)
+        print(f"🎯 [多样性过滤] 过滤后保留 {len(diversified_links)} 个多样化链接")
+        
+        return diversified_links
+    
+    def _apply_domain_diversity_filter(self, links: List[str], max_per_domain: int = 2, max_total: int = 8) -> List[str]:
+        """Apply diversity filtering to ensure balanced domain representation"""
+        from urllib.parse import urlparse
+        
+        # Group links by domain
+        domain_groups = {}
+        for link in links:
+            try:
+                domain = urlparse(link).netloc.lower()
+                # Normalize domain (remove www, etc)
+                domain = domain.replace('www.', '')
+                
+                if domain not in domain_groups:
+                    domain_groups[domain] = []
+                domain_groups[domain].append(link)
+            except Exception as e:
+                print(f"⚠️  [域名解析] 无法解析链接: {link}, 错误: {e}")
+                continue
+        
+        print(f"🎯 [域名统计] 发现 {len(domain_groups)} 个不同域名")
+        for domain, links_list in domain_groups.items():
+            print(f"   - {domain}: {len(links_list)} 个链接")
+        
+        # Apply diversity filtering
+        diversified_links = []
+        
+        # Define domain priority for better selection
+        priority_domains = [
+            'wikipedia.org', 'en.wikipedia.org',  # Reference first
+            'reddit.com',  # Community insights
+            'billboard.com', 'rollingstone.com',  # Industry authority
+            'music.apple.com', 'spotify.com',  # Platform data
+            'soompi.com', 'allkpop.com',  # Specialized coverage
+            'natalie.mu', 'oricon.co.jp',  # Regional authority
+            'genius.com', 'pitchfork.com'  # Music analysis
+        ]
+        
+        # First pass: prioritize important domains
+        for priority_domain in priority_domains:
+            if len(diversified_links) >= max_total:
+                break
+                
+            for domain, links_list in domain_groups.items():
+                if priority_domain in domain and links_list:
+                    # Take up to max_per_domain links from this domain
+                    selected_count = min(max_per_domain, len(links_list), max_total - len(diversified_links))
+                    selected_links = links_list[:selected_count]
+                    diversified_links.extend(selected_links)
+                    
+                    # Remove selected links to avoid duplicates
+                    domain_groups[domain] = links_list[selected_count:]
+                    
+                    print(f"🎯 [优先选择] {domain}: 选择了 {selected_count} 个链接")
+                    break
+        
+        # Second pass: fill remaining slots with other domains
+        for domain, links_list in domain_groups.items():
+            if len(diversified_links) >= max_total:
+                break
+                
+            if links_list:  # Still has unselected links
+                selected_count = min(max_per_domain, len(links_list), max_total - len(diversified_links))
+                selected_links = links_list[:selected_count]
+                diversified_links.extend(selected_links)
+                
+                print(f"🎯 [补充选择] {domain}: 选择了 {selected_count} 个链接")
+        
+        return diversified_links[:max_total]
     
     def _extract_authority_links(self, search_results: str) -> List[str]:
         """Extract diverse information source URLs from search results"""
@@ -403,20 +479,38 @@ class DiscoveryChain:
             return ""
     
     def _fetch_authority_web_content(self, authority_links: List[str]) -> List[str]:
-        """Fetch web content from authority music platform links"""
-        target_domains = ['music.apple.com', 'open.spotify.com', 'billboard.com']
+        """Fetch web content from diverse information sources - try all authority links"""
         web_contents = []
+        max_attempts = min(8, len(authority_links))  # Reasonable limit
+        successful_reads = 0
         
-        for link in authority_links:
-            # Check if link is from target domains
-            if any(domain in link for domain in target_domains):
+        print(f"🌐 [WebReader] 开始从 {len(authority_links)} 个权威链接抓取内容")
+        
+        for i, link in enumerate(authority_links[:max_attempts]):
+            if successful_reads >= 6:  # Stop after 6 successful reads
+                break
+                
+            try:
+                print(f"🔗 [{i+1}/{max_attempts}] 尝试抓取: {link}")
                 content = self._fetch_web_content(link)
-                if content and len(content) > 100:  # Only include substantial content
-                    web_contents.append(f"=== Web Content from {link} ===\n{content}")
+                
+                if content and len(content.strip()) > 100:  # Only include substantial content
+                    # Truncate very long content to avoid token limits
+                    truncated_content = content[:4000] if len(content) > 4000 else content
+                    web_contents.append(f"=== Web Content from {link} ===\n{truncated_content}")
+                    successful_reads += 1
+                    print(f"✅ [成功抓取] {len(content)} 字符 from {link}")
+                else:
+                    print(f"⚠️  [内容不足] 链接返回内容过少: {len(content) if content else 0} 字符")
                     
                 # Rate limiting for web requests
-                time.sleep(1)
+                time.sleep(1.0)
+                
+            except Exception as e:
+                print(f"❌ [抓取失败] {link}: {str(e)}")
+                continue
         
+        print(f"🎯 [抓取总结] 成功抓取 {successful_reads}/{max_attempts} 个链接")
         return web_contents
     
     def _clean_json_string(self, response: str) -> str:
@@ -467,6 +561,56 @@ class DiscoveryChain:
         
         return cleaned
     
+    def _extract_json_manually(self, response: str) -> Optional[str]:
+        """Manually extract JSON object from response using pattern matching"""
+        # Look for JSON object pattern
+        json_patterns = [
+            r'\{[^{}]*"song"[^{}]*"artist"[^{}]*\}',  # Simple object with song and artist
+            r'\{[^{}]*"artist"[^{}]*"song"[^{}]*\}',  # Reversed order
+            r'\{.*?"song".*?"artist".*?\}',  # More permissive
+        ]
+        
+        for pattern in json_patterns:
+            match = re.search(pattern, response, re.DOTALL | re.IGNORECASE)
+            if match:
+                json_candidate = match.group()
+                # Basic cleanup
+                json_candidate = re.sub(r'\n', ' ', json_candidate)
+                json_candidate = re.sub(r'\s+', ' ', json_candidate)
+                return json_candidate.strip()
+        
+        return None
+    
+    def _build_fallback_json(self, response: str, original_song: str, original_artist: str) -> Optional[Dict[str, Any]]:
+        """Build fallback JSON when parsing fails but response seems valid"""
+        response_lower = response.lower()
+        
+        # Check if response indicates the song exists
+        if any(word in response_lower for word in ['song', 'track', 'music', 'artist', 'singer']):
+            # Try to extract basic info or use original
+            fallback = {
+                'song': original_song,
+                'artist': original_artist,
+                'genre': 'Unknown',
+                'year': 'Unknown',
+                'youtube_link': '',
+                'confidence': 0.5  # Lower confidence for fallback
+            }
+            
+            # Try to extract year if present
+            year_match = re.search(r'\b(19\d{2}|20\d{2})\b', response)
+            if year_match:
+                fallback['year'] = year_match.group(1)
+            
+            # Try to extract YouTube link if present
+            youtube_match = re.search(r'https?://(?:www\.)?youtube\.com/watch\?v=[\w-]+', response)
+            if youtube_match:
+                fallback['youtube_link'] = youtube_match.group()
+            
+            return fallback
+        
+        return None
+    
     def _clean_search_goal(self, goal: str) -> str:
         """Clean search goal to extract core keywords"""
         unwanted_phrases = [
@@ -492,78 +636,181 @@ class DiscoveryChain:
             
         return cleaned.strip()
     
-    def _extract_songs_from_text(self, search_results: List[str], context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Extract specific songs from search results using AI"""
-        combined_results = "\n".join(search_results)
+    async def _extract_songs_from_text(self, search_results: List[str], context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Two-stage extraction: clues first, then verification"""
+        if not search_results:
+            return []
+        
+        # Stage 1: Extract song clues (maximum recall)
+        song_clues = await self._extract_song_clues(search_results, context)
+        if not song_clues:
+            print("Stage 1: No song clues extracted")
+            return []
+        
+        print(f"Stage 1: Extracted {len(song_clues)} song clues")
+        
+        # Stage 2: Verify clues in parallel (maximum precision) 
+        # 现在直接await，不用asyncio.run()
+        verified_songs = await self._verify_clues_parallel(song_clues, context)
+        
+        print(f"Stage 2: Verified {len(verified_songs)} songs from {len(song_clues)} clues")
+        return verified_songs
+    
+    async def _extract_song_clues(self, web_content: List[str], context: Dict[str, Any]) -> List[Dict[str, str]]:
+        """Stage 1: Extract song clues with maximum recall"""
+        combined_results = "\n".join(web_content)
         goal = context.get('search_goal', '')
         
-        # Debug information
-        print(f"🎯 [调试] 搜索结果总长度: {len(combined_results)} 字符")
-        print(f"🎯 [调试] 搜索结果预览前500字符:")
-        print(combined_results[:500])
-        print("=" * 50)
-        
-        extraction_prompt = get_extraction_prompt(goal, combined_results, context)
+        print(f"Clue extraction from {len(combined_results)} characters")
         
         try:
-            response = self.model_manager.invoke_text(extraction_prompt)
-            print(f"🎯 [调试] AI提取响应长度: {len(response)} 字符")
-            print(f"🎯 [调试] AI完整响应:")
-            print(response)
-            print("=" * 50)
+            clue_prompt = get_clue_extraction_prompt(goal, combined_results, context)
+            response = await asyncio.to_thread(self.model_manager.invoke_text, clue_prompt)
             
-            # Clean and parse JSON response with robustness
+            # Parse clue response
             cleaned_response = self._clean_json_string(response)
-            print(f"🎯 [JSON清理] 清理后长度: {len(cleaned_response)}")
-            
-            # Parse JSON response
             json_match = re.search(r'\[.*\]', cleaned_response, re.DOTALL)
+            
             if json_match:
                 json_string = json_match.group()
-                print(f"🎯 [调试] 找到JSON匹配: {json_string[:200]}...")
-                
                 try:
-                    extracted_songs = json.loads(json_string)
+                    raw_clues = json.loads(json_string)
                 except json.JSONDecodeError as e:
-                    print(f"⚠️  [JSON解析] 第一次解析失败: {e}")
-                    # Try additional cleaning
-                    json_string = self._aggressive_json_clean(json_string)
-                    try:
-                        extracted_songs = json.loads(json_string)
-                        print(f"🎯 [JSON清理] 二次清理成功")
-                    except json.JSONDecodeError as e2:
-                        print(f"⚠️  [JSON解析] 二次解析也失败: {e2}")
-                        return []
+                    print(f"Clue parsing failed: {e}")
+                    return []
                 
-                # Filter and validate results with enhanced metadata
-                valid_songs = []
-                for song in extracted_songs:
-                    if isinstance(song, dict) and song.get('song') and song.get('artist'):
-                        enhanced_song = {
-                            'song': song['song'].strip(),
-                            'artist': song['artist'].strip(),
-                            'context': song.get('context', '').strip(),
-                            'is_official_release': song.get('is_official_release', True),
-                            'artist_nationality': song.get('artist_nationality', 'unknown'),
-                            'explanation': song.get('explanation', ''),
-                            'source': 'discovery'
-                        }
-                        valid_songs.append(enhanced_song)
-                        
-                        # Log metadata for debugging
-                        print(f"🎯 [提取歌曲] {enhanced_song['song']} by {enhanced_song['artist']}")
-                        print(f"   📝 推荐理由: {enhanced_song['context']}")
-                        if enhanced_song['explanation']:
-                            print(f"   ⚠️  元数据说明: {enhanced_song['explanation']}")
-                
-                print(f"🎯 [调试] 解析出的歌曲数量: {len(extracted_songs)}")
-                print(f"🎯 [调试] 验证通过的歌曲数量: {len(valid_songs)}")
-                return valid_songs[:5]  # Return max 5 songs
-            else:
-                print("⚠️  [调试] 无法解析歌曲提取结果，未找到JSON数组")
-                print(f"⚠️  [调试] 完整响应: {response}")
-                return []
-                
-        except Exception as e:
-            print(f"⚠️  歌曲提取失败: {e}")
+                # Basic validation and deduplication
+                validated_clues = self._deduplicate_clues(raw_clues)
+                return validated_clues[:8]  # Limit to 8 clues max
+            
+            print("No valid JSON found in clue response")
             return []
+            
+        except Exception as e:
+            print(f"Clue extraction failed: {e}")
+            return []
+    
+    def _deduplicate_clues(self, raw_clues: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+        """Deduplicate clues based on (song, artist) pairs"""
+        seen_pairs: Set[Tuple[str, str]] = set()
+        unique_clues = []
+        
+        for clue in raw_clues:
+            if isinstance(clue, dict) and clue.get('song') and clue.get('artist'):
+                song = clue['song'].strip().lower()
+                artist = clue['artist'].strip().lower()
+                pair = (song, artist)
+                
+                if pair not in seen_pairs:
+                    seen_pairs.add(pair)
+                    unique_clues.append({
+                        'song': clue['song'].strip(),
+                        'artist': clue['artist'].strip()
+                    })
+        
+        print(f"Deduplication: {len(raw_clues)} -> {len(unique_clues)} unique clues")
+        return unique_clues
+    
+    async def _verify_clues_parallel(self, clues: List[Dict[str, str]], context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Stage 2: Verify clues in parallel with early exit"""
+        verified_songs = []
+        target_count = min(5, len(clues))  # Target 5 songs max
+        
+        print(f"Starting parallel verification of {len(clues)} clues...")
+        
+        # Add rate limiting delay between requests
+        async def verify_with_delay(clue, delay):
+            if delay > 0:
+                await asyncio.sleep(delay)
+            return await self._verify_single_clue(clue['song'], clue['artist'], context)
+        
+        # Create tasks with staggered delays to avoid rate limiting
+        tasks = []
+        for i, clue in enumerate(clues):
+            delay = i * 1.5  # 1.5 second delay between requests
+            task = verify_with_delay(clue, delay)
+            tasks.append(task)
+        
+        try:
+            # Wait for all tasks to complete (with timeout)
+            results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=60)
+            
+            # Process results
+            for i, result in enumerate(results):
+                if isinstance(result, dict) and result.get('song'):
+                    verified_songs.append(result)
+                    print(f"Verified {len(verified_songs)}: {result['song']} by {result['artist']}")
+                    
+                    if len(verified_songs) >= target_count:
+                        print(f"Reached target {target_count} songs")
+                        break
+                elif isinstance(result, Exception):
+                    print(f"Verification task {i+1} failed: {result}")
+                    
+        except asyncio.TimeoutError:
+            print("Verification timeout - using partial results")
+        except Exception as e:
+            print(f"Parallel verification failed: {e}")
+        
+        return verified_songs
+    
+    async def _verify_single_clue(self, song: str, artist: str, context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Verify a single clue and enrich with metadata"""
+        try:
+            # Search for YouTube link
+            if self.brave_search:
+                search_query = f"site:youtube.com {artist} {song} official"
+                search_results = await asyncio.to_thread(self.brave_search.run, search_query, 5)
+            else:
+                search_results = ""
+            
+            # AI verification
+            verification_prompt = get_single_clue_verification_prompt(song, artist, search_results, context)
+            response = await asyncio.to_thread(self.model_manager.invoke_text, verification_prompt)
+            
+            # Enhanced parsing with multiple fallback attempts
+            if response and response.strip().lower() != 'null':
+                # Attempt 1: Standard cleaning
+                try:
+                    cleaned_response = self._clean_json_string(response)
+                    verified_data = json.loads(cleaned_response)
+                    
+                    if verified_data.get('song') and verified_data.get('artist'):
+                        return verified_data
+                except json.JSONDecodeError as e1:
+                    # Attempt 2: Aggressive cleaning
+                    try:
+                        aggressively_cleaned = self._aggressive_json_clean(response)
+                        verified_data = json.loads(aggressively_cleaned)
+                        
+                        if verified_data.get('song') and verified_data.get('artist'):
+                            print(f"🔧 [Aggressive parsing] Succeeded for {song} by {artist}")
+                            return verified_data
+                    except json.JSONDecodeError as e2:
+                        # Attempt 3: Extract JSON object manually
+                        try:
+                            manual_json = self._extract_json_manually(response)
+                            if manual_json:
+                                verified_data = json.loads(manual_json)
+                                if verified_data.get('song') and verified_data.get('artist'):
+                                    print(f"🔧 [Manual extraction] Succeeded for {song} by {artist}")
+                                    return verified_data
+                        except json.JSONDecodeError as e3:
+                            # Final attempt: Try to build JSON from key phrases
+                            fallback_data = self._build_fallback_json(response, song, artist)
+                            if fallback_data:
+                                print(f"🔧 [Fallback construction] Used for {song} by {artist}")
+                                return fallback_data
+                            
+                            # All attempts failed - log for debugging
+                            print(f"❌ [JSON Parse Failure] {song} by {artist}")
+                            print(f"   Original response: {response[:200]}...")
+                            print(f"   Standard clean error: {e1}")
+                            print(f"   Aggressive clean error: {e2}")
+                            print(f"   Manual extract error: {e3}")
+            
+            return None
+            
+        except Exception as e:
+            print(f"Single clue verification failed for {song} by {artist}: {e}")
+            return None

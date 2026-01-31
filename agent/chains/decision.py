@@ -63,81 +63,281 @@ class DecisionChain:
         return context
     
     def _apply_hard_filters(self, candidates: List[Dict[str, Any]], context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Apply hard code-level filtering to remove unwanted content"""
-        origin_region = context.get('origin_region', 'unknown')
+        """
+        硬核垃圾过滤 + AI语义识别混合模式
+        - 硬过滤：全球通用噪音词（cover, remix, reaction等）
+        - AI识别：地域身份、官方性质、视频类型等复杂判断
+        """
         vocal_type = context.get('vocal_type', 'unknown')
-        is_specific = context.get('is_specific', False)
         
-        # Define filter keywords
-        EXCLUDE_KEYWORDS = [
-            'cover', 'reaction', 'tutorial', 'how to', 'lesson',
-            'remix', 'mashup', 'nightcore', 'slowed', 'reverb',
-            'live performance', 'concert', 'stage', 'fancam',
-            'karaoke', 'instrumental version', 'backing track'
+        # 1. 硬核垃圾过滤 - 全球通用噪音关键词
+        UNIVERSAL_EXCLUDE_KEYWORDS = [
+            'cover', 'reaction', 'tutorial', 'how to', 'lesson', 'guide',
+            'remix', 'mashup', 'nightcore', 'slowed', 'reverb', '8d audio',
+            'karaoke', 'instrumental version', 'backing track', 'acapella',
+            'color coded', 'lyrics with', 'pronunciation guide', 'romanization',
+            'fan made', 'amateur', 'bootleg', 'pirated', 'compilation mix'
         ]
         
-        # Live performance is only excluded if not specifically requested
+        # Live performance关键词 - 仅在未特别请求时过滤
         LIVE_KEYWORDS = ['live', 'concert', 'performance', '演唱会', 'ライブ', '콘서트']
         
-        # Language validation keywords by region
-        REGION_LANGUAGES = {
-            'Japan': ['japanese', 'jpop', 'j-pop', '日本', 'japan', 'ジャニ'],
-            'Korea': ['korean', 'kpop', 'k-pop', '韩国', 'korea', '한국'],
-            'Greater China': ['chinese', 'cpop', 'c-pop', 'mandarin', 'cantonese', '中文', '华语', '粤语']
-        }
+        print(f"🛡️ [硬核过滤] 开始处理 {len(candidates)} 个候选")
         
-        filtered = []
+        hard_filtered = []
         for candidate in candidates:
             title = candidate.get('song', '').lower()
             artist = candidate.get('artist', '').lower()
             context_text = candidate.get('context', '').lower()
-            full_text = f"{title} {artist} {context_text}"
+            youtube_title = candidate.get('youtube_title', '').lower()
+            full_text = f"{title} {artist} {context_text} {youtube_title}"
             
-            # Track filtering reasons
-            filter_reasons = []
-            
-            # 1. Hard exclude keywords (unless specifically requested)
+            # 硬核垃圾过滤
             excluded = False
-            for keyword in EXCLUDE_KEYWORDS:
+            exclude_reason = ""
+            
+            for keyword in UNIVERSAL_EXCLUDE_KEYWORDS:
                 if keyword in full_text:
-                    if keyword in LIVE_KEYWORDS and vocal_type == 'live':
-                        continue  # Allow live if specifically requested
-                    filter_reasons.append(f"contains_{keyword}")
                     excluded = True
+                    exclude_reason = keyword
                     break
             
+            # Live performance特殊处理
+            if not excluded:
+                for keyword in LIVE_KEYWORDS:
+                    if keyword in full_text and vocal_type != 'live':
+                        excluded = True
+                        exclude_reason = f"live_performance_{keyword}"
+                        break
+            
             if excluded:
-                print(f"🛡️ [过滤] {title} by {artist} - 原因: {filter_reasons}")
+                print(f"🛡️ [硬过滤] {title} by {artist} - 垃圾词: {exclude_reason}")
                 continue
             
-            # 2. Language/Region validation
-            if origin_region in REGION_LANGUAGES and is_specific:
-                expected_langs = REGION_LANGUAGES[origin_region]
-                has_correct_lang = any(lang in full_text for lang in expected_langs)
-                
-                # Check for wrong region indicators
-                wrong_regions = []
-                for region, langs in REGION_LANGUAGES.items():
-                    if region != origin_region:
-                        if any(lang in full_text for lang in langs):
-                            wrong_regions.append(region)
-                
-                if wrong_regions and not has_correct_lang:
-                    filter_reasons.append(f"wrong_region_{wrong_regions[0]}")
-                    print(f"🛡️ [地域过滤] {title} - 期望: {origin_region}, 检测到: {wrong_regions}")
-                    continue
-            
-            # 3. Quality scoring
-            quality_score = self._calculate_quality_score(candidate, full_text)
-            candidate['quality_score'] = quality_score
-            candidate['filter_reasons'] = filter_reasons
-            
-            filtered.append(candidate)
+            # 通过硬过滤的候选进入下一阶段
+            hard_filtered.append(candidate)
         
-        return filtered
+        print(f"🛡️ [硬过滤] 剩余 {len(hard_filtered)}/{len(candidates)} 个候选")
+        
+        # 2. AI语义识别阶段 - 批量处理节约成本
+        if not hard_filtered:
+            return []
+        
+        ai_validated = self._ai_semantic_validation(hard_filtered, context)
+        print(f"🤖 [AI验证] 最终通过 {len(ai_validated)} 个候选")
+        
+        return ai_validated
     
-    def _calculate_quality_score(self, candidate: Dict[str, Any], full_text: str) -> float:
-        """Calculate quality score for ranking"""
+    def _ai_semantic_validation(self, candidates: List[Dict[str, Any]], context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """使用AI进行语义验证：地域身份、官方性质、视频类型判定"""
+        origin_region = context.get('origin_region', 'unknown')
+        search_goal = context.get('search_goal', '')
+        
+        validated_candidates = []
+        
+        # 批量处理以节约成本
+        for candidate in candidates:
+            try:
+                # 构造AI验证的上下文信息
+                validation_context = {
+                    'song': candidate.get('song', ''),
+                    'artist': candidate.get('artist', ''),
+                    'youtube_title': candidate.get('youtube_title', ''),
+                    'youtube_url': candidate.get('youtube_url', ''),
+                    'context': candidate.get('context', ''),
+                    'origin_region': origin_region,
+                    'search_goal': search_goal
+                }
+                
+                # 使用AI进行智能验证
+                ai_analysis = self._invoke_ai_content_analysis(validation_context)
+                
+                if ai_analysis:
+                    # 将AI分析结果合并到候选中
+                    enhanced_candidate = {
+                        **candidate,
+                        'ai_verified': True,
+                        'content_type': ai_analysis.get('content_type', 'unknown'),
+                        'officialness_score': ai_analysis.get('officialness_score', 50),
+                        'region_match': ai_analysis.get('region_match', True),
+                        'channel_authority': ai_analysis.get('channel_authority', 'unknown'),
+                        'ai_quality_score': ai_analysis.get('quality_score', 50)
+                    }
+                    
+                    # 基于AI分析结果计算最终质量分数
+                    final_score = self._calculate_ai_enhanced_quality_score(enhanced_candidate)
+                    enhanced_candidate['quality_score'] = final_score
+                    
+                    validated_candidates.append(enhanced_candidate)
+                    
+                    print(f"🤖 [AI验证] {candidate.get('song', 'N/A')} - "
+                          f"类型: {ai_analysis.get('content_type', 'unknown')}, "
+                          f"官方度: {ai_analysis.get('officialness_score', 50)}, "
+                          f"最终分数: {final_score:.1f}")
+                else:
+                    # AI验证失败，使用基础评分
+                    base_score = self._calculate_basic_quality_score(candidate)
+                    candidate['quality_score'] = base_score
+                    candidate['ai_verified'] = False
+                    validated_candidates.append(candidate)
+                    print(f"⚠️  [AI验证] {candidate.get('song', 'N/A')} - AI验证失败，使用基础评分: {base_score:.1f}")
+                
+            except Exception as e:
+                print(f"❌ [AI验证] 验证失败: {e}")
+                # 出错时使用基础评分
+                base_score = self._calculate_basic_quality_score(candidate)
+                candidate['quality_score'] = base_score
+                candidate['ai_verified'] = False
+                validated_candidates.append(candidate)
+        
+        return validated_candidates
+    
+    def _invoke_ai_content_analysis(self, validation_context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """调用AI进行内容分析"""
+        try:
+            analysis_prompt = self._build_content_analysis_prompt(validation_context)
+            response = self.model_manager.invoke_text(analysis_prompt)
+            
+            # 解析AI响应 - 清理格式问题
+            if response and response.strip():
+                try:
+                    # 清理常见的JSON格式问题
+                    cleaned_response = response.strip()
+                    if cleaned_response.startswith('```json'):
+                        cleaned_response = cleaned_response.replace('```json', '').replace('```', '').strip()
+                    elif cleaned_response.startswith('```'):
+                        cleaned_response = cleaned_response.replace('```', '').strip()
+                    
+                    analysis = json.loads(cleaned_response)
+                    return analysis
+                except json.JSONDecodeError as e:
+                    print(f"⚠️  [AI分析] JSON解析失败: {str(e)}")
+                    print(f"📝 [原始响应] {response[:200]}...")
+                    return None
+            else:
+                return None
+        except Exception as e:
+            print(f"❌ [AI分析] 调用失败: {e}")
+            return None
+    
+    def _build_content_analysis_prompt(self, context: Dict[str, Any]) -> str:
+        """构建内容分析提示词"""
+        return f"""你是专业的音乐内容分析师。请分析以下音乐内容的真实性和质量：
+
+**目标歌曲信息：**
+- 歌曲：{context['song']}
+- 艺人：{context['artist']}
+- 期望地域：{context['origin_region']}
+- 搜索目标：{context['search_goal']}
+
+**YouTube视频信息：**
+- 视频标题：{context['youtube_title']}
+- 视频链接：{context['youtube_url']}
+- 相关描述：{context['context']}
+
+**分析要求：**
+1. **地域匹配性**：利用你的音乐知识判断这个艺人/歌曲是否来自目标地域
+2. **频道权威性**：分析YouTube频道名称，识别官方频道（如SMTOWN、JYPE、Avex等）
+3. **内容类型识别**：判断是Official MV、Lyric Video、Audio Only、Live Performance等
+4. **官方程度评估**：基于频道名、视频标题、描述判断官方程度
+
+**特别注意：**
+- 即使标题是全英文，也要根据艺人背景判断地域匹配
+- 官方发行的K-Pop、J-Pop经常使用全英文标题
+- Topic频道（如"Artist - Topic"）是官方的音频频道
+- VEVO、官方唱片公司频道都是高权威来源
+
+请返回JSON格式分析结果：
+```json
+{{
+    "region_match": true/false,
+    "content_type": "Official MV/Lyric Video/Audio Only/Live Performance/Topic Channel/Unknown",
+    "channel_authority": "Official Label/Topic Channel/Artist Official/Unofficial/Unknown", 
+    "officialness_score": 0-100,
+    "quality_score": 0-100,
+    "analysis_notes": "分析说明"
+}}
+```
+
+只返回JSON，不要其他文字。"""
+
+    def _calculate_ai_enhanced_quality_score(self, candidate: Dict[str, Any]) -> float:
+        """基于AI分析结果计算增强质量分数"""
+        base_score = 30.0
+        
+        # AI官方度评分权重 (40%)
+        officialness = candidate.get('officialness_score', 50)
+        base_score += officialness * 0.4
+        
+        # AI质量评分权重 (30%)
+        ai_quality = candidate.get('ai_quality_score', 50)
+        base_score += ai_quality * 0.3
+        
+        # 内容类型加分 (20%)
+        content_type = candidate.get('content_type', 'unknown')
+        content_type_scores = {
+            'Official MV': 25,
+            'Topic Channel': 23,
+            'Audio Only': 20,
+            'Lyric Video': 18,
+            'Live Performance': 15,
+            'Unknown': 10
+        }
+        base_score += content_type_scores.get(content_type, 10)
+        
+        # 频道权威性加分 (10%)
+        authority = candidate.get('channel_authority', 'unknown')
+        authority_scores = {
+            'Official Label': 10,
+            'Topic Channel': 9,
+            'Artist Official': 8,
+            'Unofficial': 3,
+            'Unknown': 5
+        }
+        base_score += authority_scores.get(authority, 5)
+        
+        # 地域匹配性加分/减分
+        if not candidate.get('region_match', True):
+            base_score -= 20  # 地域不匹配重度减分
+        
+        return max(0.0, min(100.0, base_score))
+    
+    def _calculate_basic_quality_score(self, candidate: Dict[str, Any]) -> float:
+        """计算基础质量分数（AI验证失败时使用）"""
+        score = 40.0  # 基础分数降低，因为未通过AI验证
+        
+        # 基于关键词的简单评分
+        title = candidate.get('song', '').lower()
+        artist = candidate.get('artist', '').lower()
+        youtube_title = candidate.get('youtube_title', '').lower()
+        full_text = f"{title} {artist} {youtube_title}"
+        
+        # 官方指示词加分
+        if any(word in full_text for word in ['official', 'vevo', 'topic']):
+            score += 25
+        
+        # 高质量指示词加分
+        if any(word in full_text for word in ['hd', 'hq', 'music video']):
+            score += 10
+        
+        # 负面指示词减分
+        if any(word in full_text for word in ['amateur', 'fan made', 'unofficial']):
+            score -= 15
+        
+        return max(0.0, min(100.0, score))
+    
+    def _calculate_quality_score(self, candidate: Dict[str, Any], full_text: str = None) -> float:
+        """
+        保持向后兼容的质量评分方法
+        注意：新的AI增强过滤流程使用 _calculate_ai_enhanced_quality_score
+        """
+        if full_text is None:
+            title = candidate.get('song', '').lower()
+            artist = candidate.get('artist', '').lower()
+            context_text = candidate.get('context', '').lower()
+            youtube_title = candidate.get('youtube_title', '').lower()
+            full_text = f"{title} {artist} {context_text} {youtube_title}"
+        
         score = 50.0  # Base score
         
         # Official channel indicators (high priority)
@@ -148,7 +348,7 @@ class DecisionChain:
                 break
         
         # High-quality source indicators
-        QUALITY_INDICATORS = ['hd', 'hq', 'high quality', 'official mv', 'music video']
+        QUALITY_INDICATORS = ['hd', 'hq', 'high quality', 'official', 'music video']
         for indicator in QUALITY_INDICATORS:
             if indicator in full_text:
                 score += 10
@@ -191,7 +391,7 @@ class DecisionChain:
             print(f"🎵 [自动音源] 搜索: {artist} - {song}")
             
             # Generate official audio search query
-            search_query = f"{artist} {song} official audio"
+            search_query = f"{artist} {song} official"
             
             try:
                 # Use Brave Search to find YouTube links
@@ -493,7 +693,7 @@ class DecisionChain:
         return final_results
     
     def _validate_music_source(self, search_results: str, song_info: Dict[str, Any], context: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
-        """Validate music source using AI"""
+        """Validate music source using enhanced AI with regional and content analysis"""
         # Check if it's instrumental music
         instruments = context.get('instruments', '') if context else ''
         is_instrumental = instruments or any(word in song_info.get('song', '').lower() + ' ' + song_info.get('artist', '').lower() 
@@ -506,35 +706,49 @@ class DecisionChain:
                 validation_prompt = get_popular_music_validation_prompt(song_info, search_results)
             
             response = self.model_manager.invoke_text(validation_prompt)
-            print(f"📝 [调试日志] AI验证响应: {response[:200]}...")
+            print(f"📝 [AI验证] 增强响应: {response[:200]}...")
             
             # Parse validation result
             if response.strip().lower() in ['null', '{}', '[]', 'none']:
                 return None
             
-            # Try to parse JSON response
+            # Try to parse enhanced JSON response
             try:
                 validated = json.loads(response.strip())
                 if validated and validated.get('link'):
                     match_reason = validated.get('match_reason', '找到匹配的音源')
-                    print(f"🎯 [音源验证] 匹配理由: {match_reason}")
                     
-                    return {
+                    # 增强的返回结构，包含AI分析结果
+                    enhanced_result = {
                         **song_info,
                         'official_link': validated['link'],
                         'platform': validated.get('platform', 'Unknown'),
                         'source_title': validated.get('title', ''),
                         'match_reason': match_reason,
                         'source': 'web',
-                        'duration_validated': True
+                        'duration_validated': True,
+                        # 新增AI分析字段
+                        'content_type': validated.get('content_type', 'Unknown'),
+                        'channel_authority': validated.get('channel_authority', 'Unknown'),
+                        'region_match': validated.get('region_match', True),
+                        'officialness_score': validated.get('officialness_score', 50),
+                        'ai_enhanced': True
                     }
+                    
+                    print(f"🎯 [增强验证] 内容类型: {validated.get('content_type', 'Unknown')}")
+                    print(f"🎯 [增强验证] 频道权威: {validated.get('channel_authority', 'Unknown')}")
+                    print(f"🎯 [增强验证] 地域匹配: {validated.get('region_match', True)}")
+                    print(f"🎯 [增强验证] 官方度: {validated.get('officialness_score', 50)}")
+                    
+                    return enhanced_result
+                    
             except json.JSONDecodeError:
-                print(f"📝 [调试日志] JSON解析失败，响应: {response[:100]}...")
+                print(f"📝 [AI验证] JSON解析失败，响应: {response[:100]}...")
                 return None
             
             return None
             
         except Exception as e:
-            print(f"⚠️  音源验证失败: {e}")
+            print(f"⚠️  [AI验证] 增强验证失败: {e}")
             print(f"📝 [调试日志] 验证过程出错，原始搜索结果: {search_results[:300]}...")
             return None

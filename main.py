@@ -46,6 +46,9 @@ class Song(BaseModel):
     link: Optional[str] = None
     platform: Optional[str] = None
     source: Optional[str] = None  # "web" or "local"
+    is_official_release: Optional[bool] = None
+    artist_nationality: Optional[str] = None
+    explanation: Optional[str] = None
 
 class RecommendationResponse(BaseModel):
     success: bool
@@ -93,7 +96,10 @@ def parse_recommendation_text(recommendation_text: str, found_songs: List[Dict[s
                 reason=reason,
                 link=song_data.get('official_link'),
                 platform=song_data.get('platform'),
-                source=song_data.get('source', 'web')
+                source=song_data.get('source', 'web'),
+                is_official_release=song_data.get('is_official_release'),
+                artist_nationality=song_data.get('artist_nationality'),
+                explanation=song_data.get('explanation')
             ))
     
     else:
@@ -166,7 +172,7 @@ async def get_recommendation(request: RecommendationRequest):
         logger.info(f"🎵 Processing recommendation request: {request.user_input}")
         
         # Get recommendation from agent
-        result = music_agent.recommend(request.user_input)
+        result = await music_agent.recommend(request.user_input)
         
         # Get the structured context data from result
         found_songs = result.get('found_songs', [])
@@ -226,7 +232,7 @@ async def get_recommendation_from_image(image: UploadFile = File(...)):
         logger.info(f"🖼️ Processing image recommendation: {image.filename}")
         
         # Get recommendation from agent using image path
-        result = music_agent.recommend(temp_file_path)
+        result = await music_agent.recommend(temp_file_path)
         
         # Get the structured context data from result
         found_songs = result.get('found_songs', [])

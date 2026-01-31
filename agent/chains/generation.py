@@ -2,7 +2,7 @@
 Generation Chain - Stage 4: Final output generation
 """
 from typing import Dict, Any
-
+import json
 
 class GenerationChain:
     """Handles final response generation"""
@@ -53,24 +53,22 @@ class GenerationChain:
             artist_name = song.get('artist', 'Unknown') 
             context_info = song.get('context', '')
             official_link = song.get('official_link', '')
-            match_reason = song.get('match_reason', '')
+            source_type = song.get('source', 'unknown')
             
             # Build song entry
             song_entry = f"{i}. **{song_name}** - *{artist_name}*\n"
+            if context_info:
+                song_entry += f"   > {context_info}\n"
             
-            # Add enhanced context if available
-            if context_info and context_info.strip():
-                song_entry += f"   💭 {context_info}\n"
-            
-            # Add match reason if available
-            if match_reason:
-                song_entry += f"   🎯 {match_reason}\n"
-            
-            # Add clickable link if available
-            if official_link and official_link.strip():
-                song_entry += f"   🎶 [点击播放]({official_link})\n"
+            # Dynamic link handling based on verification status
+            if official_link:
+                song_entry += f"   🔗 [在 YouTube 上播放]({official_link})\n\n"
+            elif source_type == 'no_link':
+                song_entry += f"   💡 *经典曲目，建议在您的主音乐 App 中搜索听取*\n\n"
+            elif source_type == 'verified':
+                song_entry += f"   ⚠️ *已验证歌曲信息，播放链接暂不可用*\n\n"
             else:
-                song_entry += f"   📋 暂无播放链接\n"
+                song_entry += f"   💡 *已收录该单曲，建议在您的主音乐 App 中搜索听取*\n\n"
             
             report_parts.append(song_entry)
         
@@ -136,44 +134,43 @@ class GenerationChain:
         """创建文案增强的 Prompt"""
         songs_text = '\n'.join([f"{i+1}. {song}" for i, song in enumerate(song_list)])
         
-        return f"""你是一位资深音乐评论人，请为以下歌曲生成简洁、专业、有吸引力的推荐语。
+        return f"""你是一位资深音乐专栏作家。请为以下歌曲撰写一段深度、富有感染力且专业的推荐语。
 
-用户搜索：{search_goal}
+用户搜索需求：{search_goal}
 歌曲列表：
 {songs_text}
 
 要求：
-1. 每首歌一句推荐语（30字以内）
-2. 突出歌曲的独特价值或流行背景
-3. 避免空洞词汇如"经典作品"、"热门歌曲"
-4. 可提及具体的成就、影响或特色
+1. 每首歌撰写一段 100-150 字左右的深度评析。
+2. 评价维度：包含歌曲的风格流派、艺人的创作背景、歌曲的情感共鸣点、或者在乐坛的地位/成就。
+3. 语气：专业、感性且吸引人，像是在为顶级音乐杂志撰稿。
+4. 避免空洞词汇，尽量描述听感（如：编曲的层次感、人声的质感等）。
 
-示例风格：
-- "Billboard Hot 100 冠军单曲，定义了2023年流行音乐"
-- "TikTok病毒传播，全球播放量突破10亿次"
-- "获格莱美最佳流行歌曲提名的治愈系神曲"
-
-请按顺序输出每首歌的推荐语，每行一句，不要编号："""
+请务必返回以下 JSON 格式：
+{{"recommendations": ["文案1...", "文案2..."]}}
+"""
     
     def _parse_enhancement_response(self, response: str) -> list:
-        """解析 LLM 的增强响应"""
-        lines = response.strip().split('\n')
-        contexts = []
-        
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-                
-            # Remove numbering if present
-            if line.startswith(('1.', '2.', '3.', '4.', '5.', '6.', '7.', '8.')):
-                line = line.split('.', 1)[1].strip()
+        """解析 LLM 的增强响应，支持 JSON 格式"""
+        try:
+            # 1. 尝试清理 Markdown 的代码块标签
+            cleaned_response = response.strip()
+            if "```json" in cleaned_response:
+                cleaned_response = cleaned_response.split("```json")[1].split("```")[0].strip()
+            elif "```" in cleaned_response:
+                cleaned_response = cleaned_response.split("```")[1].split("```")[0].strip()
+
+            # 2. 使用 json 模块解析
+            data = json.loads(cleaned_response)
             
-            # Remove leading dashes
-            if line.startswith('-'):
-                line = line[1:].strip()
-            
-            if line and len(line) > 5:  # Valid context
-                contexts.append(line)
-        
-        return contexts
+            # 3. 提取推荐语列表
+            if isinstance(data, dict) and "recommendations" in data:
+                return data["recommendations"]
+            elif isinstance(data, list):
+                return data
+            return []
+
+        except Exception as e:
+            print(f"⚠️ [解析失败] 正在尝试行切分兜底: {e}")
+            # 兜底方案：如果 AI 没按 JSON 返回，按行切分并过滤掉短句
+            return [line.strip() for line in response.split('\n') if len(line.strip()) > 20]
