@@ -275,19 +275,6 @@ async def get_recommendation_from_image(image: UploadFile = File(...)):
         except Exception as cleanup_error:
             logger.warning(f"⚠️ Failed to cleanup temp file: {cleanup_error}")
 
-# Add startup event to initialize agent
-@app.on_event("startup")
-async def startup_event():
-    """Initialize MusicAgent on startup"""
-    global music_agent
-    try:
-        logger.info("🎵 Initializing MusicAgent...")
-        music_agent = MusicAgent(use_local_model=False)
-        logger.info("✅ MusicAgent initialized successfully")
-    except Exception as e:
-        logger.error(f"❌ Failed to initialize MusicAgent: {e}")
-        raise e
-
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(

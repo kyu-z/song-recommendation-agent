@@ -1,8 +1,11 @@
 """
-Brave Search API wrapper for music discovery
+Brave Search API wrapper for music discovery.
+
+Note: Free-tier quotas return HTTP 429 often; callers should expect occasional
+empty or error-string results and keep query counts modest.
 """
 import requests
-from typing import Optional
+from typing import Optional, List, Dict, Any, Union
 
 
 class BraveSearchTool:
@@ -19,6 +22,20 @@ class BraveSearchTool:
     
     def run(self, query: str, count: int = 10) -> str:
         """Execute search query and return formatted results"""
+        results = self.run_structured(query=query, count=count)
+        if isinstance(results, str):
+            return results
+
+        formatted_results = []
+        for result in results:
+            title = result.get("title", "")
+            url = result.get("url", "")
+            description = result.get("description", "")
+            formatted_results.append(f"Title: {title}\nURL: {url}\nDescription: {description}\n")
+        return "\n".join(formatted_results)
+
+    def run_structured(self, query: str, count: int = 10) -> Union[List[Dict[str, Any]], str]:
+        """Execute search query and return structured results (title/url/description)."""
         try:
             params = {
                 "q": query,
@@ -35,17 +52,14 @@ class BraveSearchTool:
             
             data = response.json()
             results = data.get("web", {}).get("results", [])
-            
-            # Format results for LLM consumption
-            formatted_results = []
+            structured: List[Dict[str, Any]] = []
             for result in results:
-                title = result.get("title", "")
-                url = result.get("url", "")
-                description = result.get("description", "")
-                
-                formatted_results.append(f"Title: {title}\nURL: {url}\nDescription: {description}\n")
-            
-            return "\n".join(formatted_results)
+                structured.append({
+                    "title": result.get("title", ""),
+                    "url": result.get("url", ""),
+                    "description": result.get("description", ""),
+                })
+            return structured
             
         except requests.RequestException as e:
             print(f"Brave Search API error: {e}")

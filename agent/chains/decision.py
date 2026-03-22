@@ -14,6 +14,11 @@ class DecisionChain:
     def __init__(self, brave_search, model_manager):
         self.brave_search = brave_search
         self.model_manager = model_manager
+        # In-memory caches to reduce repeated network/LLM work within a server process
+        # (artist,song) -> extracted youtube candidates
+        self._youtube_candidate_cache: Dict[str, List[Dict[str, Any]]] = {}
+        # youtube_url -> ai analysis result
+        self._ai_analysis_cache: Dict[str, Dict[str, Any]] = {}
     
     def select(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -85,7 +90,21 @@ class DecisionChain:
         print(f"🛡️ [硬核过滤] 开始处理 {len(candidates)} 个候选")
         
         hard_filtered = []
+        songs_without_links = []
+        allow_no_link = bool(context.get("allow_no_link", False))
+        
         for candidate in candidates:
+            # 如果没有YouTube链接：默认不返回（避免慢且不稳定的“无音源推荐”）
+            if not candidate.get('youtube_url'):
+                if allow_no_link:
+                    candidate['quality_score'] = 25
+                    candidate['preserved_without_link'] = True
+                    candidate['context'] = candidate.get('context') or "歌曲信息已识别，但暂未找到可用的官方播放链接"
+                    songs_without_links.append(candidate)
+                    print(f"✅ [保留无链接] {candidate.get('song', 'N/A')} by {candidate.get('artist', 'N/A')}")
+                continue
+            
+            # 有YouTube链接的进行正常硬过滤
             title = candidate.get('song', '').lower()
             artist = candidate.get('artist', '').lower()
             context_text = candidate.get('context', '').lower()
@@ -104,11 +123,16 @@ class DecisionChain:
             
             # Live performance特殊处理
             if not excluded:
-                for keyword in LIVE_KEYWORDS:
-                    if keyword in full_text and vocal_type != 'live':
-                        excluded = True
-                        exclude_reason = f"live_performance_{keyword}"
-                        break
+                # 特殊处理：Love Live! 是作品名，不应该被过滤
+                if 'love live' in full_text.lower():
+                    # 跳过live关键词检测
+                    pass
+                else:
+                    for keyword in LIVE_KEYWORDS:
+                        if keyword in full_text and vocal_type != 'live':
+                            excluded = True
+                            exclude_reason = f"live_performance_{keyword}"
+                            break
             
             if excluded:
                 print(f"🛡️ [硬过滤] {title} by {artist} - 垃圾词: {exclude_reason}")
@@ -117,7 +141,12 @@ class DecisionChain:
             # 通过硬过滤的候选进入下一阶段
             hard_filtered.append(candidate)
         
+        # 合并有链接过滤后的和无链接保留的
+        hard_filtered.extend(songs_without_links)
+        
         print(f"🛡️ [硬过滤] 剩余 {len(hard_filtered)}/{len(candidates)} 个候选")
+        print(f"   - 有链接通过过滤: {len(hard_filtered) - len(songs_without_links)}")
+        print(f"   - 无链接直接保留: {len(songs_without_links)}")
         
         # 2. AI语义识别阶段 - 批量处理节约成本
         if not hard_filtered:
@@ -129,93 +158,244 @@ class DecisionChain:
         return ai_validated
     
     def _ai_semantic_validation(self, candidates: List[Dict[str, Any]], context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """使用AI进行语义验证：地域身份、官方性质、视频类型判定"""
+        """
+        批量校验 + 纠错闸门（严格模式优先真歌）：
+        - 核心输出：exists_for_artist / confidence / canonical_song / canonical_artist / official_link
+        - 严格策略：宁可少返回，也不输出错配/不存在歌曲
+        """
         origin_region = context.get('origin_region', 'unknown')
         search_goal = context.get('search_goal', '')
-        
-        validated_candidates = []
-        
-        # 批量处理以节约成本
+        strict_true_only = bool(context.get("strict_true_only", True))
+        min_confidence = float(context.get("min_confidence", 0.78))
+
+        # 1) 先把无需验证/无链接的直接保留
+        preserved: List[Dict[str, Any]] = []
+        to_validate: List[Dict[str, Any]] = []
+
         for candidate in candidates:
+            if candidate.get('preserved_without_link'):
+                preserved.append(candidate)
+                continue
+
+            youtube_url = (candidate.get('youtube_url') or '').strip()
+            if youtube_url and youtube_url in self._ai_analysis_cache:
+                candidate['_cached_ai_analysis'] = self._ai_analysis_cache[youtube_url]
+            to_validate.append(candidate)
+
+        if not to_validate:
+            for c in preserved:
+                print(f"✅ [跳过AI验证] {c.get('song', 'N/A')} - 无链接歌曲直接保留")
+            return preserved
+
+        # 2) 组装 batch 任务（跳过已缓存的 URL）
+        batch_items: List[Dict[str, Any]] = []
+        item_map: List[Dict[str, Any]] = []  # keep references aligned by index
+
+        for candidate in to_validate:
+            youtube_url = (candidate.get('youtube_url') or '').strip()
+            if candidate.get('_cached_ai_analysis'):
+                continue
+            batch_items.append({
+                "song": candidate.get("song", ""),
+                "artist": candidate.get("artist", ""),
+                "youtube_title": candidate.get("youtube_title", ""),
+                "youtube_url": youtube_url,
+                "source_url": candidate.get("source_url", "") or "",
+                "evidence_quote": candidate.get("evidence_quote", "") or candidate.get("context", "") or "",
+            })
+            item_map.append(candidate)
+
+        batch_results: List[Optional[Dict[str, Any]]] = []
+        if batch_items:
+            batch_results = self._invoke_ai_verify_batch(
+                batch_items=batch_items,
+                origin_region=origin_region,
+                search_goal=search_goal
+            )
+            # Write-through cache
+            for item, analysis in zip(batch_items, batch_results):
+                url = (item.get("youtube_url") or "").strip()
+                if url and isinstance(analysis, dict):
+                    self._ai_analysis_cache[url] = analysis
+
+        # 3) 将分析结果合并回 candidates，并应用严格过滤策略
+        validated_candidates: List[Dict[str, Any]] = []
+
+        # Apply for items that came from batch call
+        batch_iter_idx = 0
+        for candidate in to_validate:
             try:
-                # 构造AI验证的上下文信息
-                validation_context = {
-                    'song': candidate.get('song', ''),
-                    'artist': candidate.get('artist', ''),
-                    'youtube_title': candidate.get('youtube_title', ''),
-                    'youtube_url': candidate.get('youtube_url', ''),
-                    'context': candidate.get('context', ''),
-                    'origin_region': origin_region,
-                    'search_goal': search_goal
-                }
-                
-                # 使用AI进行智能验证
-                ai_analysis = self._invoke_ai_content_analysis(validation_context)
-                
-                if ai_analysis:
-                    # 将AI分析结果合并到候选中
+                youtube_url = (candidate.get('youtube_url') or '').strip()
+                ai_analysis = candidate.pop('_cached_ai_analysis', None)
+
+                if ai_analysis is None and batch_items:
+                    # Candidate might be part of batch (in order). We locate by pointer list.
+                    # Simpler and stable: if this candidate equals item_map[batch_iter_idx], consume one.
+                    if batch_iter_idx < len(item_map) and candidate is item_map[batch_iter_idx]:
+                        ai_analysis = batch_results[batch_iter_idx] if batch_iter_idx < len(batch_results) else None
+                        batch_iter_idx += 1
+
+                if isinstance(ai_analysis, dict):
+                    # Strict verification gate
+                    exists_for_artist = bool(ai_analysis.get("exists_for_artist", True))
+                    confidence = ai_analysis.get("confidence", 0.0)
+                    try:
+                        confidence = float(confidence)
+                    except Exception:
+                        confidence = 0.0
+
+                    canonical_song = (ai_analysis.get("canonical_song") or candidate.get("song") or "").strip()
+                    canonical_artist = (ai_analysis.get("canonical_artist") or candidate.get("artist") or "").strip()
+
+                    # Prefer verifier-provided official_link; otherwise keep current youtube_url
+                    official_link = (ai_analysis.get("official_link") or ai_analysis.get("youtube_url") or candidate.get("youtube_url") or "").strip()
+
+                    if strict_true_only:
+                        if (not exists_for_artist) or (confidence < min_confidence) or (not official_link):
+                            # Fail closed in strict mode
+                            continue
+
                     enhanced_candidate = {
                         **candidate,
+                        "song": canonical_song or candidate.get("song", ""),
+                        "artist": canonical_artist or candidate.get("artist", ""),
+                        "exists_for_artist": exists_for_artist,
+                        "confidence": confidence,
+                        "official_link": official_link or None,
                         'ai_verified': True,
                         'content_type': ai_analysis.get('content_type', 'unknown'),
                         'officialness_score': ai_analysis.get('officialness_score', 50),
                         'region_match': ai_analysis.get('region_match', True),
                         'channel_authority': ai_analysis.get('channel_authority', 'unknown'),
-                        'ai_quality_score': ai_analysis.get('quality_score', 50)
+                        'ai_quality_score': ai_analysis.get('quality_score', 50),
+                        # Optional: a short explanation to display as context
+                        'explanation': ai_analysis.get('reject_reason') or ai_analysis.get('why_match') or candidate.get('explanation')
                     }
-                    
-                    # 基于AI分析结果计算最终质量分数
+
                     final_score = self._calculate_ai_enhanced_quality_score(enhanced_candidate)
                     enhanced_candidate['quality_score'] = final_score
-                    
+
+                    # If we got a useful short explanation, use it as context shown to users
+                    if enhanced_candidate.get('explanation') and not enhanced_candidate.get('context'):
+                        enhanced_candidate['context'] = enhanced_candidate['explanation']
+
                     validated_candidates.append(enhanced_candidate)
-                    
-                    print(f"🤖 [AI验证] {candidate.get('song', 'N/A')} - "
-                          f"类型: {ai_analysis.get('content_type', 'unknown')}, "
-                          f"官方度: {ai_analysis.get('officialness_score', 50)}, "
-                          f"最终分数: {final_score:.1f}")
                 else:
-                    # AI验证失败，使用基础评分
                     base_score = self._calculate_basic_quality_score(candidate)
                     candidate['quality_score'] = base_score
                     candidate['ai_verified'] = False
-                    validated_candidates.append(candidate)
-                    print(f"⚠️  [AI验证] {candidate.get('song', 'N/A')} - AI验证失败，使用基础评分: {base_score:.1f}")
-                
+                    if not strict_true_only:
+                        validated_candidates.append(candidate)
             except Exception as e:
                 print(f"❌ [AI验证] 验证失败: {e}")
-                # 出错时使用基础评分
                 base_score = self._calculate_basic_quality_score(candidate)
                 candidate['quality_score'] = base_score
                 candidate['ai_verified'] = False
-                validated_candidates.append(candidate)
-        
+                if not strict_true_only:
+                    validated_candidates.append(candidate)
+
+        # Finally add preserved no-link candidates only in non-strict mode
+        if not strict_true_only:
+            for c in preserved:
+                print(f"✅ [跳过AI验证] {c.get('song', 'N/A')} - 无链接歌曲直接保留")
+            validated_candidates.extend(preserved)
+
         return validated_candidates
+
+    def _parse_ai_json(self, response: str) -> Optional[Any]:
+        """Parse JSON response, handling common markdown fences."""
+        if not response or not response.strip():
+            return None
+        cleaned = response.strip()
+        if cleaned.startswith('```json'):
+            cleaned = cleaned.replace('```json', '').replace('```', '').strip()
+        elif cleaned.startswith('```'):
+            cleaned = cleaned.replace('```', '').strip()
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError as e:
+            print(f"⚠️  [AI分析] JSON解析失败: {str(e)}")
+            print(f"📝 [原始响应] {response[:200]}...")
+            return None
+
+    def _invoke_ai_verify_batch(
+        self,
+        batch_items: List[Dict[str, Any]],
+        origin_region: str,
+        search_goal: str
+    ) -> List[Optional[Dict[str, Any]]]:
+        """调用AI进行批量“存在性+错配校验+纠错”（单次 LLM 往返）。"""
+        try:
+            prompt = self._build_batch_verify_prompt(
+                batch_items=batch_items,
+                origin_region=origin_region,
+                search_goal=search_goal
+            )
+            response = self.model_manager.invoke_text(prompt)
+            parsed = self._parse_ai_json(response)
+
+            # Expected: list aligned with input order
+            if isinstance(parsed, dict) and "results" in parsed:
+                parsed = parsed["results"]
+
+            if not isinstance(parsed, list):
+                return [None] * len(batch_items)
+
+            # Normalize length
+            results: List[Optional[Dict[str, Any]]] = []
+            for i in range(len(batch_items)):
+                item = parsed[i] if i < len(parsed) else None
+                results.append(item if isinstance(item, dict) else None)
+            return results
+        except Exception as e:
+            print(f"❌ [AI分析] 批量调用失败: {e}")
+            return [None] * len(batch_items)
+
+    def _build_batch_verify_prompt(
+        self,
+        batch_items: List[Dict[str, Any]],
+        origin_region: str,
+        search_goal: str
+    ) -> str:
+        """构建批量校验提示词（要求严格 JSON 数组输出，顺序与输入一致）。"""
+        items_json = json.dumps(batch_items, ensure_ascii=False)
+        return f"""你是严格的音乐事实核查员。你只能使用我提供的证据文本与候选链接来判断，不允许凭空补全或“凭常识猜测”。
+
+期望地域：{origin_region}
+用户搜索目标：{search_goal}
+
+候选列表（JSON数组，每个元素包含 song/artist/source_url/evidence_quote/youtube_title/youtube_url）：
+{items_json}
+
+任务（对每个候选逐条输出结果，顺序必须一致）：\n
+1) **存在性与错配检查**：判断“song 是否确实存在、并且确实是该 artist 的作品”。\n
+2) **证据一致性**：evidence_quote 必须能支撑 song+artist 配对；如果证据不足或冲突，判 false。\n
+3) **纠错**：如果你能在证据中明确看到更正确的歌名/艺人（例如拼写/别名/括号副标题），输出 canonical_*；否则保持原样。\n
+4) **链接严禁捏造**：official_link 只能从给定 youtube_url 原样复制，或设为 null。\n
+\n
+输出字段：\n
+- exists_for_artist: true/false\n
+- canonical_song: string\n
+- canonical_artist: string\n
+- confidence: 0.0-1.0（只基于证据一致性与链接匹配程度）\n
+- official_link: string|null（只能等于输入 youtube_url 或 null）\n
+- content_type: \"Official MV\"|\"Lyric Video\"|\"Audio Only\"|\"Live Performance\"|\"Topic Channel\"|\"Unknown\"\n
+- channel_authority: \"Official Label\"|\"Topic Channel\"|\"Artist Official\"|\"Unofficial\"|\"Unknown\"\n
+- officialness_score: 0-100\n
+- quality_score: 0-100\n
+- why_match: 一句话说明为什么匹配用户意图（具体到风格/年代/场景）\n
+- reject_reason: 若 exists_for_artist=false，用一句话说明错误原因（例如“song-title 属于另一位艺人/证据不足/疑似不存在”）\n
+
+返回 **仅** 一个 JSON 数组，数组长度必须与输入候选列表一致，顺序必须一致。不要返回其他文字。"""
     
     def _invoke_ai_content_analysis(self, validation_context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """调用AI进行内容分析"""
         try:
             analysis_prompt = self._build_content_analysis_prompt(validation_context)
             response = self.model_manager.invoke_text(analysis_prompt)
-            
-            # 解析AI响应 - 清理格式问题
-            if response and response.strip():
-                try:
-                    # 清理常见的JSON格式问题
-                    cleaned_response = response.strip()
-                    if cleaned_response.startswith('```json'):
-                        cleaned_response = cleaned_response.replace('```json', '').replace('```', '').strip()
-                    elif cleaned_response.startswith('```'):
-                        cleaned_response = cleaned_response.replace('```', '').strip()
-                    
-                    analysis = json.loads(cleaned_response)
-                    return analysis
-                except json.JSONDecodeError as e:
-                    print(f"⚠️  [AI分析] JSON解析失败: {str(e)}")
-                    print(f"📝 [原始响应] {response[:200]}...")
-                    return None
-            else:
-                return None
+
+            parsed = self._parse_ai_json(response)
+            return parsed if isinstance(parsed, dict) else None
         except Exception as e:
             print(f"❌ [AI分析] 调用失败: {e}")
             return None
@@ -381,7 +561,16 @@ class DecisionChain:
         """Automatically find official YouTube sources for discovered songs"""
         results = []
         
+        # Hard cap to keep latency bounded
+        discovered_songs = discovered_songs[:10]
+        max_linked_candidates = 8
+
         for song_info in discovered_songs:
+            # Early stop once we already have enough linked candidates
+            linked_count = sum(1 for r in results if r.get("youtube_url"))
+            if linked_count >= max_linked_candidates:
+                break
+
             artist = song_info.get('artist', '')
             song = song_info.get('song', '')
             
@@ -392,47 +581,84 @@ class DecisionChain:
             
             # Generate official audio search query
             search_query = f"{artist} {song} official"
+            cache_key = f"{artist.strip().lower()}|||{song.strip().lower()}"
             
             try:
                 # Use Brave Search to find YouTube links
                 if self.brave_search:
-                    search_results = self.brave_search.run(f"site:youtube.com {search_query}")
+                    # Cache hit: reuse validated candidates to avoid repeated Brave calls
+                    if cache_key in self._youtube_candidate_cache:
+                        validated_candidates = self._youtube_candidate_cache[cache_key]
+                    else:
+                        # Prefer structured results to avoid brittle regex title extraction
+                        structured = None
+                        if hasattr(self.brave_search, "run_structured"):
+                            structured = self.brave_search.run_structured(f"site:youtube.com {search_query}", count=5)
+                            if isinstance(structured, str) and ("Too Many Requests" in structured or "429" in structured):
+                                print("⚠️  [自动音源] Brave 触发限流(429)，等待后重试一次...")
+                                time.sleep(1.5)
+                                structured = self.brave_search.run_structured(f"site:youtube.com {search_query}", count=3)
+
+                        if isinstance(structured, list):
+                            youtube_candidates = [
+                                {"url": r.get("url", ""), "title": r.get("title", ""), "video_id": ""}
+                                for r in structured
+                                if isinstance(r, dict) and "youtube.com/watch" in (r.get("url", "") or "")
+                            ]
+                        else:
+                            search_results = self.brave_search.run(f"site:youtube.com {search_query}", count=5)
+                            # Simple retry on rate limiting
+                            if "Too Many Requests" in search_results or "429" in search_results:
+                                print("⚠️  [自动音源] Brave 触发限流(429)，等待后重试一次...")
+                                time.sleep(1.5)
+                                search_results = self.brave_search.run(f"site:youtube.com {search_query}", count=3)
+                            youtube_candidates = self._extract_youtube_links(search_results)
+                        validated_candidates = self._validate_youtube_sources(youtube_candidates, artist, song)
+                        # Cache even empty results to avoid repeated misses
+                        self._youtube_candidate_cache[cache_key] = validated_candidates
                     
-                    # Extract YouTube links and validate them
-                    youtube_candidates = self._extract_youtube_links(search_results)
-                    validated_candidates = self._validate_youtube_sources(youtube_candidates, artist, song)
-                    
-                    # Add validated candidates to results
-                    for candidate in validated_candidates:
-                        result = {
-                            **song_info,  # Preserve original metadata
-                            'youtube_url': candidate['url'],  # Keep original field for processing
-                            'youtube_title': candidate['title'],
-                            'duration': candidate.get('duration', 'unknown'),
-                            'validation_score': candidate.get('score', 50),
-                            'source_type': 'youtube_auto'
-                        }
-                        results.append(result)
-                        
-                    print(f"🎵 [自动音源] {artist} - {song}: 找到 {len(validated_candidates)} 个候选")
+                    if validated_candidates:
+                        # Add validated candidates to results
+                        for candidate in validated_candidates:
+                            result = {
+                                **song_info,  # Preserve original metadata
+                                'youtube_url': candidate['url'],  # Keep original field for processing
+                                'youtube_title': candidate['title'],
+                                'duration': candidate.get('duration', 'unknown'),
+                                'validation_score': candidate.get('score', 50),
+                                'source_type': 'youtube_auto'
+                            }
+                            results.append(result)
+                        print(f"🎵 [自动音源] {artist} - {song}: 找到 {len(validated_candidates)} 个候选")
+                    else:
+                        # No YouTube links found, but preserve the discovered song
+                        print(f"⚠️  [自动音源] {artist} - {song}: 未找到YouTube链接，保留歌曲信息")
+                        results.append({
+                            **song_info,
+                            'youtube_url': None,
+                            'youtube_title': '',
+                            'source_type': 'no_youtube_found',
+                            'validation_score': 0
+                        })
                 else:
                     print("⚠️  Brave Search not available for source finding")
                     # Add song without YouTube link
                     results.append({
                         **song_info,
                         'youtube_url': None,
-                        'source_type': 'no_source'
+                        'youtube_title': '',
+                        'source_type': 'no_source',
+                        'validation_score': 0
                     })
-                
-                # Rate limiting
-                time.sleep(1)
                 
             except Exception as e:
                 print(f"⚠️  [自动音源] 搜索失败 {artist} - {song}: {e}")
                 results.append({
                     **song_info,
                     'youtube_url': None,
-                    'source_type': 'search_failed'
+                    'youtube_title': '',
+                    'source_type': 'search_failed',
+                    'validation_score': 0
                 })
         
         return results
@@ -552,8 +778,11 @@ class DecisionChain:
         for song_key, candidates in song_groups.items():
             print(f"🎯 [处理组] {song_key}: {len(candidates)} 个候选")
             
-            # Sort candidates by validation score (highest first)
-            candidates.sort(key=lambda x: x.get('validation_score', 0), reverse=True)
+            # Prefer AI-enhanced quality score, fall back to validation score
+            candidates.sort(
+                key=lambda x: (x.get('quality_score', 0), x.get('validation_score', 0)),
+                reverse=True
+            )
             best_candidate = candidates[0]
             
             # Standardize the output structure
@@ -581,7 +810,7 @@ class DecisionChain:
         
         return final_songs[:8]  # Return top 8 unique songs
     
-    def _extract_official_link(self, candidate: Dict[str, Any]) -> str:
+    def _extract_official_link(self, candidate: Dict[str, Any]) -> Optional[str]:
         """提取官方链接"""
         # Check various possible link fields
         possible_fields = ['youtube_url', 'official_link', 'url', 'link']
@@ -591,7 +820,7 @@ class DecisionChain:
             if link and isinstance(link, str) and link.strip():
                 return link.strip()
         
-        return ""
+        return None  # 返回None而不是空字符串
     
     def _generate_match_reason(self, candidate: Dict[str, Any]) -> str:
         """生成匹配原因"""

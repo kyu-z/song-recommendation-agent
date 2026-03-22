@@ -140,7 +140,8 @@ if __name__ == "__main__":
     
     # Test text input
     print("\n📝 测试文字输入:")
-    result = agent.recommend("rock music")
+    import asyncio
+    result = asyncio.run(agent.recommend("rock music"))
     print(f"推荐结果: {len(result.get('found_songs', []))} 首歌曲")
     
     print("\n✅ 重构完成！新的模块化架构已就绪。")

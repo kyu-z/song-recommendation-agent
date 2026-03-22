@@ -27,30 +27,32 @@ def get_clue_extraction_prompt(goal: str, search_results: str, context: Dict[str
         target_year = year_matches[0]
         year_context = f"\n**Year Context**: User is searching for {target_year} music. Prioritize songs from that era."
     
-    return f"""You are a music detective extracting song clues from web content. Your goal is MAXIMUM RECALL - find every possible song mentioned.
+    return f"""You are an evidence-first music extractor. Your goal is HIGH PRECISION: only output song–artist pairs that are explicitly supported by the provided text evidence.
 
 Search Term: {goal}
-Web Content: {search_results[:4000]}
+Web Content (evidence only; do not use external knowledge): {search_results}
 Target Region: {origin_region}
 {year_context}
 
-**EXTRACTION STRATEGY**:
-1. **Direct Extraction**: Find any song titles and artists explicitly mentioned
-2. **Franchise Association**: If the page mentions legendary franchises (e.g., Naruto, Dragon Ball, Studio Ghibli), suggest the top 3 most famous theme songs using your internal knowledge
-3. **Liberal Interpretation**: When in doubt, include it - verification happens later
-4. **Regional Focus**: Prioritize artists from {origin_region} region when applicable
-
-**RULES**:
-- Extract UP TO 12 song clues (we'll filter later)
-- Include songs even if context is unclear - better safe than sorry
-- For anime/game franchises, suggest opening/ending themes from your knowledge
-- Don't worry about metadata - just get the song names and artists
-- If artist name is unclear, make your best guess or use "Various Artists"
+**STRICT RULES (NO HALLUCINATION)**:
+1. ONLY extract pairs where BOTH the song title AND the artist name are present in the evidence text.
+2. DO NOT guess, infer, “suggest”, or use internal/external knowledge. If uncertain, omit the item.
+3. Each output item MUST include an evidence_quote: a **short plain-text** line that contains BOTH the song title and the artist name as they appear in the evidence (do not paraphrase).
+   - **JSON safety (mandatory)**: evidence_quote MUST be valid inside a JSON string. Do NOT paste Markdown links like [Artist](https://...); use the visible artist name only. Do NOT put raw double-quote characters (") inside evidence_quote — if the source uses quotes around the title, use single quotes '...' or omit them. No line breaks inside evidence_quote.
+   - **SINGLE LINE** only; keep it SHORT: 80–200 characters when possible.
+   - Do NOT include unescaped control characters.
+4. Always use empty string "" for source_url (avoids JSON truncation); evidence_quote is required.
+5. Output AT MOST 10 items.
 
 **OUTPUT FORMAT** (JSON array only):
 [
-  {{"song": "Song Title", "artist": "Artist Name"}},
-  {{"song": "Another Song", "artist": "Another Artist"}}
+  {{
+    "song": "Song Title",
+    "artist": "Artist Name",
+    "source_url": "",
+    "evidence_quote": "Exact text snippet that contains both the song and the artist"
+  }}
 ]
 
-Extract aggressively - verification will filter out false positives later."""
+IMPORTANT: Always use empty string "" for source_url. Output MUST be parseable JSON: escape any double quote inside strings as backslash-doublequote (\\"). The evidence comes from the provided web content.
+Return ONLY the JSON array. No markdown fences, no commentary."""

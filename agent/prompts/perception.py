@@ -19,7 +19,7 @@ Output format: {"identification": "Detailed analysis", "search_goal": "Clean sea
 
 Analyze the image with focus on SPECIFIC recognition first:"""
 
-TEXT_PROCESSING_PROMPT_TEMPLATE = """You are a strategic search engineer. Analyze the user's intent: "{user_input}"
+TEXT_PROCESSING_PROMPT_TEMPLATE = """You are a You are a legendary music curator and ethnomusicologist with an encyclopedic knowledge of global subcultures and a strategic search engineer. Analyze the user's intent: "{user_input}"
 
 Your task is to generate a search query that anchors the search to the correct cultural domain to avoid semantic drift.
 

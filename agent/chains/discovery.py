@@ -5,6 +5,7 @@ import asyncio
 import time
 import re
 import json
+import unicodedata
 import requests
 from typing import Dict, Any, List, Set, Optional, Tuple
 from ..prompts.clue_extraction import get_clue_extraction_prompt
@@ -13,10 +14,88 @@ from ..prompts.single_verification import get_single_clue_verification_prompt
 
 class DiscoveryChain:
     """Handles music discovery through web search and extraction"""
+
+    # Max distance (chars) between song and artist substrings in normalized evidence for relaxed tier
+    _EVIDENCE_COOCCUR_WINDOW = 420
     
     def __init__(self, brave_search, model_manager):
         self.brave_search = brave_search
         self.model_manager = model_manager
+
+    def _normalize_for_evidence_match(self, text: str) -> str:
+        """Normalize text for substring / co-occurrence checks (NFKC, quotes, whitespace)."""
+        if not text:
+            return ""
+        t = unicodedata.normalize("NFKC", text)
+        t = re.sub(r"[\u200b-\u200d\ufeff]", "", t)
+        for a, b in (
+            ("\u201c", '"'),
+            ("\u201d", '"'),
+            ("\u2018", "'"),
+            ("\u2019", "'"),
+            ("\u2013", "-"),
+            ("\u2014", "-"),
+        ):
+            t = t.replace(a, b)
+        t = t.lower()
+        t = re.sub(r"\s+", " ", t).strip()
+        return t
+
+    def _co_occurs_within_window(self, haystack: str, a: str, b: str, window: int) -> bool:
+        """Return True if some occurrence of `a` lies within `window` chars of some occurrence of `b`."""
+        if not a or not b or len(a) < 2 or len(b) < 2:
+            return False
+        pos = 0
+        while True:
+            i = haystack.find(a, pos)
+            if i == -1:
+                break
+            start = max(0, i - window)
+            end = min(len(haystack), i + len(a) + window)
+            if b in haystack[start:end]:
+                return True
+            pos = i + 1
+        pos = 0
+        while True:
+            i = haystack.find(b, pos)
+            if i == -1:
+                break
+            start = max(0, i - window)
+            end = min(len(haystack), i + len(b) + window)
+            if a in haystack[start:end]:
+                return True
+            pos = i + 1
+        return False
+
+    def _snippet_containing_both_in_source(
+        self,
+        combined_results: str,
+        song: str,
+        artist: str,
+        window: int,
+        max_len: int = 280,
+    ) -> str:
+        """Extract a slice from original evidence where song and artist co-occur within `window` (case-insensitive)."""
+        cl = combined_results.lower()
+        sl = song.strip().lower()
+        al = artist.strip().lower()
+        if not sl or not al:
+            return ""
+        pos = 0
+        while True:
+            i = cl.find(sl, pos)
+            if i == -1:
+                break
+            start = max(0, i - window)
+            end = min(len(cl), i + len(sl) + window)
+            segment = cl[start:end]
+            if al in segment:
+                raw = combined_results[start:end].strip()
+                if len(raw) > max_len:
+                    raw = raw[: max_len - 3] + "..."
+                return raw
+            pos = i + 1
+        return ""
     
     async def search(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -35,44 +114,36 @@ class DiscoveryChain:
         try:
             print("🔍 [Two-Stage Discovery] 开始两段式音乐发现...")
             
-            # Stage 1: Find authority links (Apple Music, Spotify, Wikipedia)
+            # Stage 1: Find authority links (Wikipedia/Discogs/Reddit/etc.)
             authority_links = self._find_authority_links(context)
             
-            # Stage 2: Parse authority content + general search
-            all_search_results = []
+            # Stage 2: Evidence collection (Brave + WebReader) + candidate extraction
+            all_search_results: List[str] = []
             
-            # Parse authority links first
+            # Keep a small number of Brave queries to bound latency
+            general_queries = self._generate_discovery_queries(context)[:2]
+
+            for i, query in enumerate(general_queries):
+                try:
+                    print(f"🔍 搜索 ({i+1}/{len(general_queries)}): {query}")
+                    results = await asyncio.to_thread(self.brave_search.run, query, 5)
+                    all_search_results.append(results)
+                except Exception as e:
+                    print(f"⚠️  Search failed for '{query}': {e}")
+
+            # Fetch a capped number of authority pages via WebReader for stronger evidence
             if authority_links:
-                authority_content = self._parse_authority_links(authority_links)
-                all_search_results.extend(authority_content)
-                
-                # Also try to fetch web content from authority links
                 web_content = self._fetch_authority_web_content(authority_links)
                 if web_content:
                     all_search_results.extend(web_content)
                     print(f"🌐 [WebReader] 成功抓取 {len(web_content)} 个网页内容")
-            
-            # Fallback to general discovery if no authority content
-            if not all_search_results:
-                print("🔍 [Fallback] 权威链接解析失败，使用通用搜索...")
-                general_queries = self._generate_discovery_queries(context)
-                
-                for i, query in enumerate(general_queries):
-                    if i > 0:
-                        await asyncio.sleep(1.5)  # Async rate limiting
-                    try:
-                        print(f"🔍 搜索 ({i+1}/{len(general_queries)}): {query}")
-                        results = await asyncio.to_thread(self.brave_search.run, query)
-                        all_search_results.append(results)
-                    except Exception as e:
-                        print(f"⚠️  Search failed for '{query}': {e}")
             
             print(f"🔍 [调试] 总共收集到 {len(all_search_results)} 个搜索结果")
             if not all_search_results:
                 print("🔍 [调试] 没有任何搜索结果，提前返回")
                 return context
             
-            # Extract songs from search results (now async)
+            # Extract candidates from evidence sources (async)
             discovered_songs = await self._extract_songs_from_text(all_search_results, context)
             print(f"✅ [Discovery] 发现 {len(discovered_songs)} 首候选歌曲")
             
@@ -82,6 +153,55 @@ class DiscoveryChain:
         except Exception as e:
             print(f"❌ [Discovery Phase] 失败: {e}")
             return context
+
+    def _discovery_search_query(self, context: Dict[str, Any]) -> str:
+        """
+        Normalize perception text for Brave/Wikipedia: 'gathering' matches wrong bands;
+        'urban' matches Keith Urban. Optionally append vision cultural_tags (LGBTQ+, etc.).
+        """
+        refined_query = (context.get("refined_query") or "").strip()
+        search_goal = (context.get("search_goal") or "").strip()
+        native_name = context.get("native_name")
+        search_strategy = context.get("search_strategy", "international")
+
+        if search_strategy in ["localized", "hybrid"] and native_name:
+            return (native_name or "").strip()
+
+        base = refined_query or search_goal
+        if not base:
+            return ""
+
+        s = base
+        s = re.sub(r"\bgathering\b", "", s, flags=re.IGNORECASE)
+        s = re.sub(r"\burban\b", "city", s, flags=re.IGNORECASE)
+        s = re.sub(r"\s+", " ", s).strip()
+
+        tags = context.get("cultural_tags") or []
+        if isinstance(tags, list):
+            q_compact = re.sub(r"\s+", "", s.lower()).replace("+", "")
+            for t in tags[:5]:
+                if not isinstance(t, str):
+                    continue
+                t = t.strip()
+                if not t:
+                    continue
+                tl = t.lower()
+                if not any(
+                    k in tl
+                    for k in ("lgbt", "queer", "pride", "gay", "lesbian", "trans", "bisex")
+                ):
+                    continue
+                t_compact = re.sub(r"\s+", "", tl).replace("+", "")
+                if t_compact and t_compact in q_compact:
+                    continue
+                s = f"{s} {t}".strip()
+
+        s = re.sub(r"\s+", " ", s).strip()
+        if len(s) < 3:
+            return base
+        if s != base:
+            print(f"🎯 [discovery_query] 检索词归一: {base!r} -> {s!r}")
+        return s
     
     def _generate_discovery_queries(self, context: Dict[str, Any]) -> List[str]:
         """Generate region-aware discovery queries with native names"""
@@ -99,7 +219,7 @@ class DiscoveryChain:
             primary_query = native_name
             secondary_query = refined_query
         else:
-            primary_query = refined_query or search_goal
+            primary_query = self._discovery_search_query(context) or refined_query or search_goal
             secondary_query = native_name
         
         if not primary_query:
@@ -247,6 +367,7 @@ class DiscoveryChain:
     def _find_authority_links(self, context: Dict[str, Any]) -> List[str]:
         """Stage 1: Find diverse information sources (not limited to official platforms)"""
         refined_query = context.get('refined_query', '')
+        search_goal = context.get('search_goal', '')
         native_name = context.get('native_name')
         origin_region = context.get('origin_region', 'unknown')
         search_strategy = context.get('search_strategy', 'international')
@@ -256,8 +377,11 @@ class DiscoveryChain:
         # Build diverse information source queries
         authority_queries = []
         
-        # Core query with native name if available
-        base_query = native_name if native_name and search_strategy in ['localized', 'hybrid'] else refined_query
+        # Core query with native name if available; else same normalization as general discovery
+        if native_name and search_strategy in ['localized', 'hybrid']:
+            base_query = native_name
+        else:
+            base_query = self._discovery_search_query(context) or refined_query or search_goal
         
         # Check if this is a year-specific or genre-specific query
         contains_year = self._contains_year(base_query)
@@ -313,14 +437,16 @@ class DiscoveryChain:
         
         # Execute diverse source searches
         authority_links = []
-        for query in authority_queries[:5]:  # Increased to 5 for better coverage
+        # Keep this bounded for latency + rate-limit safety (Brave-only mode).
+        for query in authority_queries[:2]:
             try:
                 print(f"🔗 [信息搜索]: {query}")
-                results = self.brave_search.run(query)
-                # Extract actual links from results
+                results = self.brave_search.run(query, count=5)
+                # Skip if Brave returned error string (e.g. 429)
+                if isinstance(results, str) and results.strip().lower().startswith("search failed"):
+                    continue
                 links = self._extract_authority_links(results)
                 authority_links.extend(links)
-                time.sleep(1)  # Rate limiting
             except Exception as e:
                 print(f"⚠️  Information search failed: {e}")
         
@@ -418,11 +544,17 @@ class DiscoveryChain:
         ]
         
         links = []
-        # Simple regex to find URLs (this is a basic implementation)
+        # Skip error responses (e.g. Brave 429 returns "Search failed: ..." with API URL in it)
+        if isinstance(search_results, str) and search_results.strip().lower().startswith("search failed"):
+            return []
+        # Exclude API endpoints (Brave error URLs contain api.search.brave.com)
+        excluded_domains = ('api.search.brave.com', 'api.brave.com')
         url_pattern = r'https?://[^\s<>"\']+(?:[^\s<>"\'.,;:])'
         urls = re.findall(url_pattern, search_results)
         
         for url in urls:
+            if any(d in url for d in excluded_domains):
+                continue
             if any(domain in url for domain in information_domains):
                 links.append(url)
         
@@ -495,8 +627,7 @@ class DiscoveryChain:
                 content = self._fetch_web_content(link)
                 
                 if content and len(content.strip()) > 100:  # Only include substantial content
-                    # Truncate very long content to avoid token limits
-                    truncated_content = content[:4000] if len(content) > 4000 else content
+                    truncated_content = self._truncate_evidence_content(content)
                     web_contents.append(f"=== Web Content from {link} ===\n{truncated_content}")
                     successful_reads += 1
                     print(f"✅ [成功抓取] {len(content)} 字符 from {link}")
@@ -512,6 +643,23 @@ class DiscoveryChain:
         
         print(f"🎯 [抓取总结] 成功抓取 {successful_reads}/{max_attempts} 个链接")
         return web_contents
+
+    def _truncate_evidence_content(self, content: str) -> str:
+        """
+        Cap per-page evidence size while preserving list-heavy tails (head + tail for long pages).
+        """
+        max_total = 24000
+        head_n = 12000
+        tail_n = 12000
+        if len(content) <= max_total:
+            return content
+        head = content[:head_n]
+        tail = content[-tail_n:]
+        return (
+            head
+            + "\n\n=== ... [middle omitted for length] ... ===\n\n"
+            + tail
+        )
     
     def _clean_json_string(self, response: str) -> str:
         """Clean JSON string to remove common AI-generated formatting issues"""
@@ -532,6 +680,45 @@ class DiscoveryChain:
         cleaned = cleaned.strip()
         
         return cleaned
+
+    def _repair_clue_json_string(self, json_string: str) -> str:
+        """
+        Best-effort fixes before json.loads: Wikipedia/Jina often yields Markdown links in
+        evidence lines; unescaped quotes in model output also break JSON.
+        """
+        s = json_string
+        # [Label](https://...) -> Label (stops at first ); good enough for Wikipedia
+        s = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", s)
+        return s
+
+    def _fallback_parse_clue_pairs(self, text: str) -> List[Dict[str, Any]]:
+        """
+        If the array is not valid JSON, extract song/artist pairs in order of appearance.
+        evidence_quote left empty; _filter_by_evidence relaxed tier can still anchor.
+        """
+        pat = re.compile(
+            r'"song"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"artist"\s*:\s*"((?:[^"\\]|\\.)*)"',
+            re.DOTALL,
+        )
+        out: List[Dict[str, Any]] = []
+        for m in pat.finditer(text):
+            try:
+                song = json.loads('"' + m.group(1) + '"')
+                artist = json.loads('"' + m.group(2) + '"')
+            except json.JSONDecodeError:
+                continue
+            song = (song or "").strip()
+            artist = (artist or "").strip()
+            if song and artist:
+                out.append(
+                    {
+                        "song": song,
+                        "artist": artist,
+                        "source_url": "",
+                        "evidence_quote": "",
+                    }
+                )
+        return out
     
     def _aggressive_json_clean(self, json_string: str) -> str:
         """More aggressive JSON cleaning for malformed responses"""
@@ -637,7 +824,12 @@ class DiscoveryChain:
         return cleaned.strip()
     
     async def _extract_songs_from_text(self, search_results: List[str], context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Two-stage extraction: clues first, then verification"""
+        """
+        Candidate extraction from web search results.
+        
+        Note: Online path returns *candidates only* (song/artist). Source finding and
+        verification are handled downstream in DecisionChain to avoid duplicate work.
+        """
         if not search_results:
             return []
         
@@ -648,16 +840,22 @@ class DiscoveryChain:
             return []
         
         print(f"Stage 1: Extracted {len(song_clues)} song clues")
-        
-        # Stage 2: Verify clues in parallel (maximum precision) 
-        # 现在直接await，不用asyncio.run()
-        verified_songs = await self._verify_clues_parallel(song_clues, context)
-        
-        print(f"Stage 2: Verified {len(verified_songs)} songs from {len(song_clues)} clues")
-        return verified_songs
+        # Return candidates only; DecisionChain will find sources and validate/rank.
+        candidates: List[Dict[str, Any]] = []
+        for clue in song_clues:
+            candidates.append({
+                "song": clue.get("song", ""),
+                "artist": clue.get("artist", ""),
+                # Use evidence quote as user-visible context; Decision will add richer explanations later.
+                "context": clue.get("evidence_quote", "") or "",
+                "source_url": clue.get("source_url", "") or "",
+                "evidence_quote": clue.get("evidence_quote", "") or "",
+                "source": "discovery"
+            })
+        return candidates
     
-    async def _extract_song_clues(self, web_content: List[str], context: Dict[str, Any]) -> List[Dict[str, str]]:
-        """Stage 1: Extract song clues with maximum recall"""
+    async def _extract_song_clues(self, web_content: List[str], context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Stage 1: Extract evidence-backed song clues (precision-first)"""
         combined_results = "\n".join(web_content)
         goal = context.get('search_goal', '')
         
@@ -673,15 +871,45 @@ class DiscoveryChain:
             
             if json_match:
                 json_string = json_match.group()
+                # Repair truncated or overly long source_url (model sometimes outputs "source_url": "https:\n" breaking JSON)
+                # Match "source_url": "https:..." (complete or truncated) and normalize to empty string
+                json_string = re.sub(
+                    r'"source_url"\s*:\s*"https:[^"]*"?,?\s*',
+                    '"source_url": "", ',
+                    json_string,
+                    flags=re.DOTALL
+                )
+                json_string = self._repair_clue_json_string(json_string)
+                raw_clues: Optional[List[Any]] = None
                 try:
-                    raw_clues = json.loads(json_string)
+                    # Sanitize control characters that break JSON parsing (e.g., raw tabs/newlines in evidence_quote)
+                    json_string_sanitized = re.sub(r'[\x00-\x1f\x7f]', ' ', json_string)
+                    raw_clues = json.loads(json_string_sanitized)
                 except json.JSONDecodeError as e:
-                    print(f"Clue parsing failed: {e}")
+                    # Retry with aggressive cleaning + link stripping again
+                    try:
+                        json_string_sanitized = re.sub(r'[\x00-\x1f\x7f]', ' ', json_string)
+                        json_string_sanitized = self._repair_clue_json_string(json_string_sanitized)
+                        aggressive = self._aggressive_json_clean(json_string_sanitized)
+                        raw_clues = json.loads(aggressive)
+                    except Exception:
+                        print(f"Clue parsing failed: {e}")
+                        print(f"📝 [clue_json_head] {json_string[:300]}...")
+                        raw_clues = self._fallback_parse_clue_pairs(json_string)
+                        if raw_clues:
+                            print(
+                                f"📝 [clue_parse] recovered {len(raw_clues)} pairs via regex fallback (empty evidence_quote)"
+                            )
+                        else:
+                            return []
+                if raw_clues is None:
                     return []
                 
                 # Basic validation and deduplication
                 validated_clues = self._deduplicate_clues(raw_clues)
-                return validated_clues[:8]  # Limit to 8 clues max
+                # Post-validate evidence to reduce hallucination: quote must exist in combined_results
+                validated_clues = self._filter_by_evidence(validated_clues, combined_results)
+                return validated_clues[:10]
             
             print("No valid JSON found in clue response")
             return []
@@ -690,8 +918,8 @@ class DiscoveryChain:
             print(f"Clue extraction failed: {e}")
             return []
     
-    def _deduplicate_clues(self, raw_clues: List[Dict[str, Any]]) -> List[Dict[str, str]]:
-        """Deduplicate clues based on (song, artist) pairs"""
+    def _deduplicate_clues(self, raw_clues: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Deduplicate clues based on (song, artist) pairs, preserving evidence fields."""
         seen_pairs: Set[Tuple[str, str]] = set()
         unique_clues = []
         
@@ -705,11 +933,93 @@ class DiscoveryChain:
                     seen_pairs.add(pair)
                     unique_clues.append({
                         'song': clue['song'].strip(),
-                        'artist': clue['artist'].strip()
+                        'artist': clue['artist'].strip(),
+                        'source_url': clue.get('source_url', '') or '',
+                        'evidence_quote': clue.get('evidence_quote', '') or ''
                     })
         
         print(f"Deduplication: {len(raw_clues)} -> {len(unique_clues)} unique clues")
         return unique_clues
+
+    def _filter_by_evidence(self, clues: List[Dict[str, Any]], combined_results: str) -> List[Dict[str, Any]]:
+        """
+        Tiered validation: strict (normalized quote substring + song/artist in quote) or
+        relaxed (both titles appear in evidence with window co-occurrence). DecisionChain
+        still enforces YouTube + AI verification downstream.
+        """
+        kept: List[Dict[str, Any]] = []
+        combined_norm = self._normalize_for_evidence_match(combined_results)
+        strict_ok_n = 0
+        relaxed_ok_n = 0
+        drop_no_pair = 0
+        drop_no_both_in_source = 0
+        drop_no_cooccurrence = 0
+        window = self._EVIDENCE_COOCCUR_WINDOW
+
+        for clue in clues:
+            quote = (clue.get("evidence_quote") or "").strip()
+            song = (clue.get("song") or "").strip()
+            artist = (clue.get("artist") or "").strip()
+            if not song or not artist:
+                drop_no_pair += 1
+                continue
+
+            song_norm = self._normalize_for_evidence_match(song)
+            artist_norm = self._normalize_for_evidence_match(artist)
+            if len(song_norm) < 2 or len(artist_norm) < 2:
+                drop_no_pair += 1
+                continue
+
+            quote_norm = self._normalize_for_evidence_match(quote) if quote else ""
+
+            strict_ok = bool(
+                quote_norm
+                and len(quote) >= 10
+                and quote_norm in combined_norm
+                and song_norm in quote_norm
+                and artist_norm in quote_norm
+            )
+
+            if strict_ok:
+                kept.append(dict(clue))
+                strict_ok_n += 1
+                continue
+
+            both_in_source = song_norm in combined_norm and artist_norm in combined_norm
+            if not both_in_source:
+                drop_no_both_in_source += 1
+                continue
+
+            relaxed_ok = self._co_occurs_within_window(
+                combined_norm, song_norm, artist_norm, window
+            )
+            if not relaxed_ok:
+                drop_no_cooccurrence += 1
+                continue
+
+            out = dict(clue)
+            need_snip = (
+                not quote
+                or len(quote) < 10
+                or quote_norm not in combined_norm
+                or song_norm not in quote_norm
+                or artist_norm not in quote_norm
+            )
+            if need_snip:
+                snip = self._snippet_containing_both_in_source(
+                    combined_results, song, artist, window
+                )
+                if snip:
+                    out["evidence_quote"] = snip
+            kept.append(out)
+            relaxed_ok_n += 1
+
+        print(
+            f"🧾 [evidence_filter] strict_ok={strict_ok_n} relaxed_ok={relaxed_ok_n} "
+            f"drop_no_pair={drop_no_pair} drop_not_in_source={drop_no_both_in_source} "
+            f"drop_no_cooccurrence={drop_no_cooccurrence}"
+        )
+        return kept
     
     async def _verify_clues_parallel(self, clues: List[Dict[str, str]], context: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Stage 2: Verify clues in parallel with early exit"""

@@ -93,8 +93,9 @@ class GenerationChain:
             elif any(keyword in context for keyword in placeholder_keywords):
                 empty_or_placeholder_count += 1
         
-        # If more than half need enhancement, do it for all
-        return empty_or_placeholder_count > len(songs) // 2
+        # Latency-sensitive default: only enhance when *all* contexts are unusable.
+        # (Otherwise the additional LLM call can dominate end-to-end latency.)
+        return empty_or_placeholder_count == len(songs)
     
     def _enhance_song_contexts(self, songs: list, search_goal: str) -> list:
         """使用 LLM 为歌曲生成专业推荐语"""

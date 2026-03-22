@@ -36,7 +36,8 @@ class PerceptionChain:
             'vocal_type': 'unknown',     # 'vocal', 'instrumental', 'unknown'
             'music_type': 'unknown',     # 'pop', 'classical', 'ost', 'ambient', 'unknown'
             'found_songs': [],
-            'final_report': ''
+            'final_report': '',
+            'cultural_tags': [],
         }
         
         # Check if input is an image
@@ -63,6 +64,8 @@ class PerceptionChain:
                 print(f"🖼️  [调试] 找到JSON: {json_match.group()}")
                 parsed = json.loads(json_match.group())
                 raw_search_goal = parsed.get('search_goal', '').strip()
+                tags = parsed.get('cultural_tags')
+                context['cultural_tags'] = tags if isinstance(tags, list) else []
                 
                 # Clean search terms: take the main part before comma, remove redundant descriptions
                 if ',' in raw_search_goal:
