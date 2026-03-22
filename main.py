@@ -58,6 +58,19 @@ class RecommendationResponse(BaseModel):
     total_found: int
     original_input: Optional[str] = None
 
+
+def sanitize_display_text(text: str) -> str:
+    """Strip wiki/markdown noise from fallback reason lines (does not affect retrieval)."""
+    if not text or not text.strip():
+        return text
+    s = text
+    s = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", s)
+    s = re.sub(r"\[\[(\d+)\]\](?:\([^)]*\))?", "", s)
+    s = re.sub(r"https?://\S+", "", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
 def parse_recommendation_text(recommendation_text: str, found_songs: List[Dict[str, Any]] = None) -> List[Song]:
     """
     Parse the recommendation text and extract structured song information
@@ -66,16 +79,17 @@ def parse_recommendation_text(recommendation_text: str, found_songs: List[Dict[s
     
     # If we have found_songs from the context, use that as the primary source
     if found_songs:
-        # Extract reasons from the recommendation text
+        # Extract reasons from the recommendation text (aligned with generation._generate_summary_report)
         song_blocks = re.split(r'\*\*([^*]+)\*\*', recommendation_text)
         reasons = {}
         
         for i in range(1, len(song_blocks), 2):
             if i + 1 < len(song_blocks):
                 song_title = song_blocks[i].strip()
+                if ' - ' not in song_title:
+                    continue
                 content = song_blocks[i + 1].strip()
                 
-                # Extract reason (text between title and link)
                 reason_match = re.search(r'推荐理由[：:]\s*(.*?)播放链接', content, re.DOTALL)
                 if reason_match:
                     reason = reason_match.group(1).strip()
@@ -86,9 +100,15 @@ def parse_recommendation_text(recommendation_text: str, found_songs: List[Dict[s
             song_title = song_data.get('song', '')
             artist_name = song_data.get('artist', '')
             
-            # Try to match reason from parsed text
             title_key = f"{song_title} - {artist_name}"
-            reason = reasons.get(title_key, song_data.get('context', '经典推荐'))
+            parsed = reasons.get(title_key)
+            if parsed:
+                reason = sanitize_display_text(parsed)
+            else:
+                reason = (song_data.get('explanation') or '').strip()
+                if not reason:
+                    reason = song_data.get('context', '经典推荐')
+                reason = sanitize_display_text(reason)
             
             songs.append(Song(
                 title=song_title,

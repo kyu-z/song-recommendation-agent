@@ -1,7 +1,7 @@
 """
 Generation Chain - Stage 4: Final output generation
 """
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 import json
 
 class GenerationChain:
@@ -24,131 +24,160 @@ class GenerationChain:
         search_goal = context.get('search_goal', '')
         
         if found_songs:
-            # Generate summary report
-            context['final_report'] = self._generate_summary_report(found_songs, search_goal)
+            context['final_report'] = self._generate_summary_report(
+                found_songs, search_goal, pipeline_context=context
+            )
             print(f"🎯 [生成阶段] 生成了包含 {len(found_songs)} 首歌曲的推荐报告")
         else:
             context['final_report'] = f"抱歉，没有找到与'{search_goal}'相关的音乐推荐。"
             print("🎯 [生成阶段] 生成了无结果的回复")
         
         return context
+
+    def _reason_line_for_report(self, song: Dict[str, Any], search_goal: str) -> str:
+        """User-facing reason line: prefer AI explanation; use context only if not raw wiki/markdown."""
+        ex = (song.get("explanation") or "").strip()
+        if ex:
+            return ex
+        ctx = (song.get("context") or "").strip()
+        if ctx and len(ctx) < 1200 and "](http" not in ctx and "[[" not in ctx:
+            return ctx
+        return f"与您的搜索「{search_goal}」相关的优质选曲，值得聆听。"
     
-    def _generate_summary_report(self, songs: list, search_goal: str) -> str:
+    def _generate_summary_report(
+        self,
+        songs: list,
+        search_goal: str,
+        pipeline_context: Optional[Dict[str, Any]] = None,
+    ) -> str:
         """Generate a summary report of found songs with enhanced context"""
         if not songs:
             return f"抱歉，没有找到与'{search_goal}'相关的音乐推荐。"
         
-        # Check if we need to enhance contexts
-        needs_enhancement = self._check_contexts_need_enhancement(songs)
-        if needs_enhancement:
-            print("🎯 [文案增强] 检测到空洞推荐理由，正在生成专业推荐语...")
-            songs = self._enhance_song_contexts(songs, search_goal)
+        # Final-list only: always run professional blurbs (does not affect retrieval)
+        print("🎯 [文案增强] 正在为已确定的歌单生成专栏式推荐语...")
+        songs = self._enhance_song_contexts(songs, search_goal, pipeline_context or {})
         
+        # No **bold** in header — main.parse_recommendation_text splits on **Title - Artist**
         report_parts = [
-            f"🎵 **基于您的搜索「{search_goal}」，为您推荐以下音乐：**\n"
+            f"🎵 基于您的搜索「{search_goal}」，为您推荐以下音乐：\n"
         ]
         
         for i, song in enumerate(songs, 1):
             song_name = song.get('song', 'Unknown')
-            artist_name = song.get('artist', 'Unknown') 
-            context_info = song.get('context', '')
+            artist_name = song.get('artist', 'Unknown')
+            reason_line = self._reason_line_for_report(song, search_goal)
             official_link = song.get('official_link', '')
             source_type = song.get('source', 'unknown')
             
-            # Build song entry
-            song_entry = f"{i}. **{song_name}** - *{artist_name}*\n"
-            if context_info:
-                song_entry += f"   > {context_info}\n"
-            
-            # Dynamic link handling based on verification status
+            song_entry = f"{i}. **{song_name} - {artist_name}**\n"
+            song_entry += f"推荐理由：{reason_line}\n"
             if official_link:
+                song_entry += f"播放链接：{official_link}\n"
                 song_entry += f"   🔗 [在 YouTube 上播放]({official_link})\n\n"
-            elif source_type == 'no_link':
-                song_entry += f"   💡 *经典曲目，建议在您的主音乐 App 中搜索听取*\n\n"
-            elif source_type == 'verified':
-                song_entry += f"   ⚠️ *已验证歌曲信息，播放链接暂不可用*\n\n"
             else:
-                song_entry += f"   💡 *已收录该单曲，建议在您的主音乐 App 中搜索听取*\n\n"
+                song_entry += f"播放链接：\n"
+                if source_type == 'no_link':
+                    song_entry += f"   💡 *经典曲目，建议在您的主音乐 App 中搜索听取*\n\n"
+                elif source_type == 'verified':
+                    song_entry += f"   ⚠️ *已验证歌曲信息，播放链接暂不可用*\n\n"
+                else:
+                    song_entry += f"   💡 *已收录该单曲，建议在您的主音乐 App 中搜索听取*\n\n"
             
             report_parts.append(song_entry)
         
-        # Add summary footer
         linked_count = sum(1 for song in songs if song.get('official_link'))
         total_count = len(songs)
         
-        report_parts.append(f"\n📊 **推荐汇总**: {total_count} 首歌曲，其中 {linked_count} 首有播放链接")
+        report_parts.append(f"\n📊 推荐汇总: {total_count} 首歌曲，其中 {linked_count} 首有播放链接")
         
         return "\n".join(report_parts)
     
-    def _check_contexts_need_enhancement(self, songs: list) -> bool:
-        """检查是否需要增强推荐理由"""
-        placeholder_keywords = ['推荐理由', '热门歌曲', '经典作品', '代表作', '必听']
-        
-        empty_or_placeholder_count = 0
-        
-        for song in songs:
-            context = song.get('context', '').strip()
-            if not context or len(context) < 10:
-                empty_or_placeholder_count += 1
-            elif any(keyword in context for keyword in placeholder_keywords):
-                empty_or_placeholder_count += 1
-        
-        # Latency-sensitive default: only enhance when *all* contexts are unusable.
-        # (Otherwise the additional LLM call can dominate end-to-end latency.)
-        return empty_or_placeholder_count == len(songs)
-    
-    def _enhance_song_contexts(self, songs: list, search_goal: str) -> list:
-        """使用 LLM 为歌曲生成专业推荐语"""
+    def _enhance_song_contexts(
+        self,
+        songs: list,
+        search_goal: str,
+        pipeline_context: Optional[Dict[str, Any]] = None,
+    ) -> list:
+        """使用 LLM 为歌曲生成专业推荐语（仅改写展示用 context，不影响检索结果）"""
+        pipeline_context = pipeline_context or {}
         try:
-            # Prepare song list for LLM
             song_list = []
             for song in songs:
                 song_info = f"{song.get('artist', '')} - {song.get('song', '')}"
                 song_list.append(song_info)
             
-            enhancement_prompt = self._create_context_enhancement_prompt(song_list, search_goal)
+            enhancement_prompt = self._create_context_enhancement_prompt(
+                song_list, search_goal, pipeline_context
+            )
             
-            # Call LLM
             response = self.model_manager.invoke_text(enhancement_prompt)
-            print(f"🎯 [LLM增强] 响应: {response}")
+            print(f"🎯 [LLM增强] 响应: {response[:500]}...")
             
-            # Parse LLM response
             enhanced_contexts = self._parse_enhancement_response(response)
             
-            # Apply enhanced contexts to songs
-            if enhanced_contexts and len(enhanced_contexts) == len(songs):
-                for i, song in enumerate(songs):
-                    if i < len(enhanced_contexts):
-                        song['context'] = enhanced_contexts[i]
-                        print(f"✨ [增强完成] {song.get('artist')} - {song.get('song')}: {enhanced_contexts[i]}")
+            if enhanced_contexts:
+                n = min(len(enhanced_contexts), len(songs))
+                for i in range(n):
+                    text = (enhanced_contexts[i] or "").strip()
+                    if text:
+                        songs[i]["context"] = text
+                        print(
+                            f"✨ [增强完成] {songs[i].get('artist')} - {songs[i].get('song')}: {text[:80]}..."
+                        )
+                if len(enhanced_contexts) < len(songs):
+                    print(
+                        f"⚠️ [文案增强] 仅返回 {len(enhanced_contexts)}/{len(songs)} 条，其余沿用原字段或兜底"
+                    )
             
         except Exception as e:
             print(f"⚠️  [文案增强失败] {e}")
-            # Fallback to basic context generation
             for song in songs:
-                if not song.get('context', '').strip():
-                    song['context'] = f"{song.get('artist', 'Unknown')} 的经典作品"
+                if not song.get("context", "").strip():
+                    song["context"] = f"{song.get('artist', 'Unknown')} 的经典作品"
         
         return songs
     
-    def _create_context_enhancement_prompt(self, song_list: list, search_goal: str) -> str:
-        """创建文案增强的 Prompt"""
-        songs_text = '\n'.join([f"{i+1}. {song}" for i, song in enumerate(song_list)])
-        
-        return f"""你是一位资深音乐专栏作家。请为以下歌曲撰写一段深度、富有感染力且专业的推荐语。
+    def _create_context_enhancement_prompt(
+        self,
+        song_list: List[str],
+        search_goal: str,
+        pipeline_context: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """专栏式推荐语：与检索无关，仅服务前端展示。"""
+        pipeline_context = pipeline_context or {}
+        songs_text = "\n".join([f"{i+1}. {song}" for i, song in enumerate(song_list)])
 
-用户搜索需求：{search_goal}
-歌曲列表：
+        scene_lines: List[str] = []
+        tags = pipeline_context.get("cultural_tags")
+        if isinstance(tags, list) and tags:
+            scene_lines.append(
+                "氛围/文化线索（可自然呼应一两句，勿堆砌标签、勿复述用户原句）："
+                + ", ".join(str(t).strip() for t in tags[:8] if t)
+            )
+        if pipeline_context.get("is_image"):
+            scene_lines.append(
+                "用户通过图片进入：可用一两句轻点氛围与情绪的呼应，避免套话如「根据图片」「与您搜索相关」。"
+            )
+
+        scene_block = ("\n" + "\n".join(scene_lines) + "\n") if scene_lines else ""
+
+        return f"""你是一位资深音乐专栏编辑。请为下面每一首歌各写一段「推荐语」（面向普通乐迷），用于 App 内展示。
+
+用户检索/意图（写作时勿照抄成标题腔）：{search_goal}
+{scene_block}
+歌曲列表（顺序与输出一一对应）：
 {songs_text}
 
-要求：
-1. 每首歌撰写一段 100-150 字左右的深度评析。
-2. 评价维度：包含歌曲的风格流派、艺人的创作背景、歌曲的情感共鸣点、或者在乐坛的地位/成就。
-3. 语气：专业、感性且吸引人，像是在为顶级音乐杂志撰稿。
-4. 避免空洞词汇，尽量描述听感（如：编曲的层次感、人声的质感等）。
+写作要求：
+1. 每一段约 90–140 字，以这首歌为主：风格、听感、作品或艺人的一点背景，读起来像人在推荐，而不是百科摘要。
+2. 语气专业但不僵硬；避免排比模板句、避免「综上所述」「总而言之」。
+3. 可以轻轻点一下与上面氛围/意图的契合点，但不要写成 SEO 或「与您搜索相关的优质选曲」这类空话。
+4. 不要输出 Markdown 链接、脚注、URL、[[数字]]。
 
-请务必返回以下 JSON 格式：
-{{"recommendations": ["文案1...", "文案2..."]}}
+请务必只返回 JSON（不要其它文字）：
+{{"recommendations": ["第1首推荐语...", "第2首推荐语...", ...]}}
+列表长度必须等于歌曲数量 {len(song_list)}。
 """
     
     def _parse_enhancement_response(self, response: str) -> list:
