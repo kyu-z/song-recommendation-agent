@@ -13,7 +13,16 @@ module.exports = {
         'cream-transparent': 'rgba(248, 244, 236, 0.8)',
       },
       fontFamily: {
-        'departure': ['Departure Mono', 'JetBrains Mono', 'Monaco', 'Consolas', 'monospace'],
+        departure: ['Departure Mono', 'JetBrains Mono', 'Monaco', 'Consolas', 'monospace'],
+        // Latin → EB Garamond; CJK falls through to mono (no glyphs in Garamond)
+        'eb-garamond': [
+          'var(--font-eb-garamond)',
+          'Departure Mono',
+          'JetBrains Mono',
+          'Monaco',
+          'Consolas',
+          'monospace',
+        ],
       },
       backdropBlur: {
         'xs': '2px',

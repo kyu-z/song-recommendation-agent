@@ -1,5 +1,7 @@
 'use client'
 
+import MixedLanguageText from './MixedLanguageText'
+
 interface Song {
   title: string
   artist: string
@@ -26,14 +28,14 @@ interface ResponseAreaProps {
 export default function ResponseArea({ isLoading, response, error }: ResponseAreaProps) {
   if (isLoading) {
     return (
-      <div className="w-full max-w-4xl mx-auto px-6 py-8">
-        <div className="border border-cream/20 rounded-lg p-8 glass-effect">
-          <div className="text-cream text-center">
-            <div className="shoegaze-loading text-lg font-departure">
-              > Penetrating the wall of sound...
+      <div className="w-full py-3 sm:py-4">
+        <div className="border border-cream/20 rounded-lg p-5 sm:p-6 glass-effect">
+          <div className="font-eb-garamond text-cream text-center">
+            <div className="shoegaze-loading text-lg">
+              {'> '}Penetrating the wall of sound...
             </div>
-            <div className="mt-4 text-sm opacity-70">
-              搜索音乐中，请稍候
+            <div className="mt-3 text-sm opacity-70">
+              Searching for music…
             </div>
           </div>
         </div>
@@ -43,11 +45,11 @@ export default function ResponseArea({ isLoading, response, error }: ResponseAre
 
   if (error) {
     return (
-      <div className="w-full max-w-4xl mx-auto px-6 py-8">
-        <div className="border border-red-500/30 rounded-lg p-8 glass-effect">
-          <div className="text-red-400 text-center">
-            <div className="text-lg font-departure mb-2">
-              连接错误
+      <div className="w-full py-3 sm:py-4">
+        <div className="border border-red-500/30 rounded-lg p-5 sm:p-6 glass-effect">
+          <div className="font-eb-garamond text-red-400 text-center">
+            <div className="text-lg mb-2">
+              Connection error
             </div>
             <div className="text-sm opacity-70">
               {error}
@@ -60,10 +62,10 @@ export default function ResponseArea({ isLoading, response, error }: ResponseAre
 
   if (!response) {
     return (
-      <div className="w-full max-w-4xl mx-auto px-6 py-8">
-        <div className="border border-cream/10 rounded-lg p-8 glass-effect">
-          <div className="text-cream/50 text-center text-lg font-departure">
-            在这里等待AI的音乐推荐...
+      <div className="w-full py-3 sm:py-4">
+        <div className="border border-cream/10 rounded-lg p-5 sm:p-6 glass-effect">
+          <div className="font-eb-garamond text-cream/50 text-center text-sm">
+            Your recommendations will show up here.
           </div>
         </div>
       </div>
@@ -72,14 +74,14 @@ export default function ResponseArea({ isLoading, response, error }: ResponseAre
 
   if (!response.success) {
     return (
-      <div className="w-full max-w-4xl mx-auto px-6 py-8">
-        <div className="border border-cream/20 rounded-lg p-8 glass-effect">
-          <div className="text-cream text-center">
-            <div className="text-lg font-departure mb-2">
-              抱歉，没有找到匹配的音乐
+      <div className="w-full py-3 sm:py-4">
+        <div className="border border-cream/20 rounded-lg p-5 sm:p-6 glass-effect">
+          <div className="font-eb-garamond text-cream text-center">
+            <div className="text-lg mb-2">
+              No matches found
             </div>
             <div className="text-sm opacity-70">
-              {response.message || '请尝试用不同的描述方式'}
+              {response.message || 'Try a different description.'}
             </div>
           </div>
         </div>
@@ -88,36 +90,27 @@ export default function ResponseArea({ isLoading, response, error }: ResponseAre
   }
 
   return (
-    <div className="w-full max-w-4xl mx-auto px-6 py-8">
-      <div className="border border-cream/20 rounded-lg p-8 glass-effect">
-        {/* 搜索信息 */}
-        <div className="mb-8 text-cream/70 text-sm font-departure">
-          搜索目标: {response.search_goal} | 找到 {response.songs.length} 首歌曲
-        </div>
-
-        {/* 歌曲列表 */}
-        <div className="space-y-8">
+    <div className="w-full py-3 sm:py-4">
+      <div className="border border-cream/20 rounded-xl p-4 sm:p-6 glass-effect">
+        <div className="space-y-5 sm:space-y-6">
           {response.songs.map((song, index) => (
             <div 
               key={index} 
-              className="border-l-2 border-cream/30 pl-6 hover:border-cream/50 transition-colors duration-300"
+              className="rounded-lg border border-cream/10 bg-black/15 p-4 sm:p-5 pl-5 sm:pl-6 shadow-sm transition-colors duration-300 hover:border-cream/25"
             >
-              {/* 歌曲标题和艺术家 */}
-              <div className="mb-3">
-                <h3 className="text-xl text-cream font-departure font-semibold">
+              <div className="font-eb-garamond mb-2">
+                <h3 className="text-xl font-semibold text-cream">
                   {song.title}
                 </h3>
-                <p className="text-cream/80 font-departure mt-1">
+                <p className="mt-1 text-cream/80">
                   by {song.artist}
                 </p>
               </div>
 
-              {/* 推荐理由 */}
-              <p className="text-white text-base leading-relaxed mb-4 font-departure">
-                {song.reason}
+              <p className="mb-3 text-white">
+                <MixedLanguageText text={song.reason} />
               </p>
 
-              {/* 播放链接 */}
               {song.link && (
                 <div className="flex items-center gap-4">
                   <a
@@ -125,20 +118,19 @@ export default function ResponseArea({ isLoading, response, error }: ResponseAre
                     target="_blank"
                     rel="noopener noreferrer"
                     className="
-                      inline-flex items-center gap-2 
-                      px-4 py-2 
-                      bg-cream/10 hover:bg-cream/20 
-                      border border-cream/30 hover:border-cream/50
-                      text-cream text-sm font-departure
+                      font-departure inline-flex items-center gap-2 
+                      px-5 py-2.5 
+                      bg-[#143805] hover:bg-[#1a5208] 
+                      border border-cream/35 hover:border-cream/55
+                      text-cream text-sm font-medium
                       rounded-md
-                      transition-all duration-200
-                      backdrop-blur-sm
+                      shadow-md transition-all duration-200
                     "
                   >
-                    🎵 播放
+                    Play
                   </a>
                   {song.platform && (
-                    <span className="text-cream/50 text-xs font-departure">
+                    <span className="font-departure text-cream/50 text-xs">
                       {song.platform}
                     </span>
                   )}

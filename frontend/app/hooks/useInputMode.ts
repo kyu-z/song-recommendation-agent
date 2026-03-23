@@ -5,7 +5,7 @@ import { useState, useRef } from 'react'
 export type InputMode = 'text' | 'image'
 
 export const useInputMode = () => {
-  const [mode, setMode] = useState<InputMode>('text')
+  const [mode, setMode] = useState<InputMode>('image')
   const [selectedImage, setSelectedImage] = useState<File | null>(null)
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -22,7 +22,7 @@ export const useInputMode = () => {
   const selectImage = (file: File) => {
     setSelectedImage(file)
     
-    // 创建预览URL
+    // Preview URL for selected image
     const reader = new FileReader()
     reader.onload = (e) => {
       setImagePreview(e.target?.result as string)

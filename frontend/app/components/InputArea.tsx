@@ -53,9 +53,9 @@ export default function InputArea({ onSubmit, isLoading }: InputAreaProps) {
   }
 
   return (
-    <div className="w-full max-w-4xl mx-auto px-6 py-8">
-      {/* 模式切换按钮 */}
-      <div className="flex justify-center mb-6">
+    <div className="w-full py-3 sm:py-4">
+      {/* Mode toggle */}
+      <div className="flex justify-center mb-3 sm:mb-4">
         <button
           type="button"
           onClick={mode === 'text' ? switchToImage : switchToText}
@@ -70,11 +70,11 @@ export default function InputArea({ onSubmit, isLoading }: InputAreaProps) {
             backdrop-blur-sm
           "
         >
-          {mode === 'text' ? '图片输入' : '文字输入'}
+          {mode === 'text' ? 'Image' : 'Text'}
         </button>
       </div>
 
-      {/* 输入区域 */}
+      {/* Input */}
       <div className="input-mode-transition">
         {mode === 'text' ? (
           <form onSubmit={handleTextSubmit} className="relative fade-in">
@@ -84,22 +84,22 @@ export default function InputArea({ onSubmit, isLoading }: InputAreaProps) {
                 onChange={(e) => setTextInput(e.target.value)}
                 onKeyDown={handleKeyPress}
                 disabled={isLoading}
-                placeholder="告诉我你想听什么音乐..."
+                placeholder="What do you want to listen to?"
                 className={`
-                  w-full min-h-[120px] p-6 
+                  w-full min-h-[108px] sm:min-h-[120px] p-4 sm:p-5
                   bg-cream-transparent glass-effect
                   text-black placeholder-gray-600
-                  border border-cream/20 rounded-lg
+                  border border-cream/20 rounded-xl
                   resize-none
                   focus:border-cream/40 focus:bg-cream/90
                   transition-all duration-300 ease-in-out
                   disabled:opacity-50 disabled:cursor-not-allowed
-                  font-departure text-lg leading-relaxed
+                  font-departure text-base leading-relaxed sm:text-lg
                 `}
                 rows={4}
               />
               
-              {/* 发送按钮 */}
+              {/* Send */}
               <button
                 type="submit"
                 disabled={!textInput.trim() || isLoading}
@@ -121,7 +121,7 @@ export default function InputArea({ onSubmit, isLoading }: InputAreaProps) {
           </form>
         ) : (
           <form onSubmit={handleImageSubmit} className="relative fade-in">
-            {/* 隐藏的文件输入 */}
+            {/* Hidden file input */}
             <input
               type="file"
               ref={fileInputRef}
@@ -130,7 +130,7 @@ export default function InputArea({ onSubmit, isLoading }: InputAreaProps) {
               className="hidden"
             />
 
-            {/* 图片上传区域 */}
+            {/* Image drop zone */}
             <ImageUploadArea
               selectedImage={selectedImage}
               imagePreview={imagePreview}
@@ -140,14 +140,13 @@ export default function InputArea({ onSubmit, isLoading }: InputAreaProps) {
               isLoading={isLoading}
             />
 
-            {/* 发送按钮 - 仅在有图片时显示 */}
             {selectedImage && (
-              <div className="flex justify-end mt-4">
+              <div className="flex justify-end mt-3">
                 <button
                   type="submit"
                   disabled={isLoading}
                   className={`
-                    px-8 py-3
+                    px-5 py-2
                     bg-cream/10 hover:bg-cream/20
                     border border-cream/30 hover:border-cream/50
                     text-cream font-departure
@@ -157,7 +156,7 @@ export default function InputArea({ onSubmit, isLoading }: InputAreaProps) {
                     backdrop-blur-sm
                   `}
                 >
-                  {isLoading ? 'Analyzing...' : '分析图片推荐音乐'}
+                  {isLoading ? 'Analyzing...' : 'Get recommendations'}
                 </button>
               </div>
             )}

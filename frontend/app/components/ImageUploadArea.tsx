@@ -48,13 +48,12 @@ export default function ImageUploadArea({
 
   if (selectedImage && imagePreview) {
     return (
-      <div className="fade-in space-y-4">
-        {/* 图片预览 */}
+      <div className="fade-in">
         <div className="relative">
           <img
             src={imagePreview}
             alt="Selected"
-            className="w-full max-h-64 object-contain rounded-lg border border-cream/20"
+            className="w-full max-h-40 object-contain rounded-lg border border-cream/20"
           />
           <button
             onClick={onClearImage}
@@ -73,12 +72,6 @@ export default function ImageUploadArea({
             ×
           </button>
         </div>
-
-        {/* 文件信息 */}
-        <div className="text-cream/70 text-sm font-departure">
-          <p>文件: {selectedImage.name}</p>
-          <p>大小: {(selectedImage.size / 1024 / 1024).toFixed(2)} MB</p>
-        </div>
       </div>
     )
   }
@@ -87,7 +80,7 @@ export default function ImageUploadArea({
     <div className="fade-in">
       <div
         className={`
-          image-drop-zone rounded-lg p-8 text-center cursor-pointer
+          image-drop-zone w-full rounded-xl px-5 py-6 sm:py-7 text-center cursor-pointer
           bg-cream/5 hover:bg-cream/10
           transition-all duration-300
           ${isDragOver ? 'dragover' : ''}
@@ -98,43 +91,39 @@ export default function ImageUploadArea({
         onDrop={handleDrop}
         onClick={!isLoading ? onTriggerFileSelect : undefined}
       >
-        <div className="space-y-4">
-          {/* 图标 */}
-          <div className="text-4xl text-cream/60">
+        <div className="space-y-3">
+          <div className="font-eb-garamond text-3xl leading-none text-cream/50">
             +
           </div>
           
-          {/* 主要文字 */}
-          <div className="text-cream text-lg font-departure">
+          <div className="font-eb-garamond text-base text-cream sm:text-lg">
             {isDragOver 
-              ? '松开以上传图片' 
-              : '点击选择图片或拖拽到此处'
+              ? 'Drop to upload' 
+              : 'Click or drag an image here'
             }
           </div>
           
-          {/* 说明文字 */}
-          <div className="text-cream/60 text-sm font-departure space-y-1">
-            <p>支持 JPG、PNG 格式</p>
-            <p>AI将分析图片的视觉意境，为你推荐匹配的音乐</p>
+          <div className="font-eb-garamond text-cream/65 space-y-1 text-sm leading-snug">
+            <p>JPG or PNG</p>
+            <p>We read the mood of your image and suggest music to match.</p>
           </div>
           
-          {/* 选择按钮 */}
           <button
             type="button"
             disabled={isLoading}
             className="
               inline-flex items-center gap-2
-              px-6 py-3 mt-4
+              px-4 py-1.5 mt-2
               bg-cream/10 hover:bg-cream/20
               border border-cream/30 hover:border-cream/50
-              text-cream font-departure
+              text-cream text-xs font-departure
               rounded-md
               transition-all duration-200
               disabled:opacity-50 disabled:cursor-not-allowed
               backdrop-blur-sm
             "
           >
-            浏览文件
+            Browse
           </button>
         </div>
       </div>

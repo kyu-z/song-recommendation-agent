@@ -4,6 +4,7 @@ import { useState } from 'react'
 import Header from './components/Header'
 import InputArea from './components/InputArea'
 import ResponseArea from './components/ResponseArea'
+import BlackOrchidOverlay from './components/BlackOrchidOverlay'
 
 interface Song {
   title: string
@@ -62,25 +63,23 @@ export default function Home() {
       setResponse(data)
     } catch (err) {
       console.error('API call failed:', err)
-      setError(err instanceof Error ? err.message : '网络连接失败')
+      setError(err instanceof Error ? err.message : 'Network error')
     } finally {
       setIsLoading(false)
     }
   }
 
   return (
-    <main className="min-h-screen bg-pure-black">
-      {/* 板块一: Header */}
-      <Header />
-      
-      {/* 板块二: Input Area */}
-      <InputArea onSubmit={handleSubmit} isLoading={isLoading} />
-      
-      {/* 板块三: Response Area */}
-      <ResponseArea isLoading={isLoading} response={response} error={error} />
-      
-      {/* 底部留白 */}
-      <div className="h-24"></div>
+    <main className="relative min-h-screen bg-[#2d6b00]">
+      <BlackOrchidOverlay />
+      <div className="relative z-10">
+        <div className="mx-auto w-full max-w-3xl px-4 sm:px-6 lg:max-w-[52rem] lg:px-10">
+          <Header />
+          <InputArea onSubmit={handleSubmit} isLoading={isLoading} />
+          <ResponseArea isLoading={isLoading} response={response} error={error} />
+        </div>
+        <div className="h-10 sm:h-12" />
+      </div>
     </main>
   )
 }
