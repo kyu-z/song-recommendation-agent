@@ -8,9 +8,9 @@ from dotenv import load_dotenv
 # Add current directory to path for imports
 sys.path.append(str(Path(__file__).parent))
 
-from database.vector_store import MusicVectorStore
+# from database.vector_store import MusicVectorStore
 from agent.models import ModelManager
-from agent.tools import MusicSearchTool
+# from agent.tools import MusicSearchTool
 from external.brave_search import BraveSearchTool
 from agent.chains.perception import PerceptionChain
 from agent.chains.discovery import DiscoveryChain
@@ -40,8 +40,8 @@ class MusicAgent:
         """
         # Initialize core components
         self.model_manager = ModelManager(use_local_model)
-        self.vector_store = MusicVectorStore()
-        self.music_search = MusicSearchTool(self.vector_store)
+        # self.vector_store = MusicVectorStore()
+        # self.music_search = MusicSearchTool(self.vector_store)
         
         # Initialize external services
         brave_api_key = os.getenv("BRAVE_API_KEY")
@@ -58,7 +58,7 @@ class MusicAgent:
         
         print(f"🤖 Music Agent initialized")
         print(f"   - Model: {self.model_manager.get_model_info()}")
-        print(f"   - Vector DB: {self.vector_store.collection.count()} songs")
+        # print(f"   - Vector DB: {self.vector_store.collection.count()} songs")
         print(f"   - Brave Search: {'✅' if self.brave_search else '❌'}")
     
     def _build_main_chain(self):
