@@ -1,4 +1,11 @@
+# Web API（只保留直接依赖；其余由 pip 自动解析）
 fastapi==0.104.1
-uvicorn==0.24.0
-pydantic==2.5.0
+uvicorn[standard]==0.24.0
 python-multipart==0.0.6
+# langchain-core（随 langchain-openai 安装）要求 pydantic>=2.7.4，勿锁回 2.5.0
+pydantic>=2.7.4,<3
+
+# Agent（music_ai_agent / agent/models 等）
+langchain-openai==0.2.14
+python-dotenv==1.0.1
+requests>=2.31.0,<3

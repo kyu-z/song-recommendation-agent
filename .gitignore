@@ -60,3 +60,5 @@ frontend/build/
 # Package manager lock files (optional - some teams commit these)
 # frontend/package-lock.json
 # frontend/yarn.lock
+
+.venv/
