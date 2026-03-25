@@ -10,7 +10,7 @@ export default function BlackOrchidOverlay() {
         backgroundImage: 'url(/black-orchid.png)',
         backgroundRepeat: 'repeat',
         backgroundPosition: '0 0',
-        opacity: 0.42,
+        opacity: 0.34,
       }}
     />
   )
