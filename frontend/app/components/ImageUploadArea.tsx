@@ -49,24 +49,34 @@ export default function ImageUploadArea({
   if (selectedImage && imagePreview) {
     return (
       <div className="fade-in">
-        <div className="relative">
+        <div
+          className="
+            flex w-full items-center gap-3 rounded-lg border border-cream/15
+            bg-black/25 px-2 py-2 glass-effect
+          "
+        >
           <img
             src={imagePreview}
-            alt="Selected"
-            className="w-full max-h-32 object-contain rounded-lg border border-cream/20"
+            alt=""
+            className="h-12 w-12 shrink-0 rounded-md object-cover"
           />
+          <span
+            className="min-w-0 flex-1 truncate font-departure text-sm text-cream/90"
+            title={selectedImage.name}
+          >
+            {selectedImage.name}
+          </span>
           <button
+            type="button"
             onClick={onClearImage}
             disabled={isLoading}
+            aria-label="Remove image"
             className="
-              absolute top-2 right-2
-              w-8 h-8 rounded-full
-              bg-black/80 hover:bg-black
-              border border-cream/30 hover:border-cream/50
-              text-cream text-sm
-              transition-all duration-200
-              disabled:opacity-50 disabled:cursor-not-allowed
-              backdrop-blur-sm
+              flex h-8 w-8 shrink-0 items-center justify-center rounded-md
+              border border-cream/20 bg-black/30 text-cream/80
+              transition-colors duration-200
+              hover:border-cream/35 hover:bg-black/50 hover:text-cream
+              disabled:cursor-not-allowed disabled:opacity-50
             "
           >
             ×
@@ -80,7 +90,8 @@ export default function ImageUploadArea({
     <div className="fade-in">
       <div
         className={`
-          image-drop-zone w-full rounded-xl px-4 py-4 sm:py-5 text-center cursor-pointer
+          image-drop-zone flex h-[280px] w-full flex-col items-center justify-center
+          rounded-xl px-4 py-4 text-center cursor-pointer
           bg-cream/5 hover:bg-cream/10
           transition-all duration-300
           ${isDragOver ? 'dragover' : ''}
@@ -111,6 +122,10 @@ export default function ImageUploadArea({
           <button
             type="button"
             disabled={isLoading}
+            onClick={(e) => {
+              e.stopPropagation()
+              if (!isLoading) onTriggerFileSelect()
+            }}
             className="
               inline-flex items-center gap-2
               px-4 py-1.5 mt-2

@@ -125,7 +125,9 @@ export default function InputArea({ onSubmit, isLoading }: InputAreaProps) {
               ref={fileInputRef}
               onChange={handleFileChange}
               accept="image/jpeg,image/jpg,image/png"
-              className="hidden"
+              className="sr-only"
+              tabIndex={-1}
+              aria-hidden
             />
 
             {/* Image drop zone */}
