@@ -5,7 +5,6 @@ import Header from './components/Header'
 import InputArea from './components/InputArea'
 import ResponseArea from './components/ResponseArea'
 import BlackOrchidOverlay from './components/BlackOrchidOverlay'
-import ForestEdges from './components/ForestEdges'
 
 interface Song {
   title: string
@@ -71,30 +70,15 @@ export default function Home() {
   }
 
   return (
-    <main className="relative min-h-screen overflow-x-hidden">
-      {/* Forest floor + canopy depth */}
-      <div
-        className="fixed inset-0 z-0 bg-gradient-to-b from-[#2a5a0c] via-[#2d6b00] to-[#4a2e0f]"
-        aria-hidden
-      />
-      <div
-        className="fixed inset-0 z-[1] bg-[radial-gradient(ellipse_120%_80%_at_50%_20%,rgba(45,107,0,0.95)_0%,rgba(74,46,15,0.55)_100%)]"
-        aria-hidden
-      />
-      {/* Mobile: brown edge wash without full tree strip */}
-      <div
-        className="pointer-events-none fixed inset-0 z-[3] bg-gradient-to-r from-[#964B00]/22 via-transparent to-[#964B00]/22 sm:hidden"
-        aria-hidden
-      />
+    <main className="relative min-h-screen overflow-x-hidden timbre-page-bg">
       <BlackOrchidOverlay />
-      <ForestEdges />
       <div className="relative z-10">
-        <div className="mx-auto w-full max-w-3xl px-4 sm:px-6 lg:max-w-[52rem] lg:px-10">
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 sm:gap-4 sm:px-6 lg:max-w-[52rem] lg:px-10">
           <Header />
           <InputArea onSubmit={handleSubmit} isLoading={isLoading} />
           <ResponseArea isLoading={isLoading} response={response} error={error} />
         </div>
-        <div className="h-10 sm:h-12" />
+        <div className="h-4 sm:h-6" />
       </div>
     </main>
   )

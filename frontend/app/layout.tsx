@@ -23,7 +23,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${ebGaramond.variable} h-full bg-[#2d6b00]`}
+      className={`${ebGaramond.variable} h-full`}
     >
       <head>
         {/* Preload JetBrains Mono font */}
@@ -37,7 +37,7 @@ export default function RootLayout({
           href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap"
         />
       </head>
-      <body className="font-departure min-h-full min-h-screen bg-[#2d6b00] text-white antialiased">
+      <body className="font-departure min-h-full min-h-screen timbre-page-bg text-white antialiased">
         {children}
       </body>
     </html>

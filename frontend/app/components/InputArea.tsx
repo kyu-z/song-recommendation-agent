@@ -53,21 +53,20 @@ export default function InputArea({ onSubmit, isLoading }: InputAreaProps) {
   }
 
   return (
-    <div className="w-full py-3 sm:py-4">
+    <div className="w-full">
       {/* Mode toggle */}
-      <div className="flex justify-center mb-3 sm:mb-4">
+      <div className="mb-2 flex justify-center">
         <button
           type="button"
           onClick={mode === 'text' ? switchToImage : switchToText}
           disabled={isLoading}
           className="
-            px-6 py-2 rounded-lg font-departure text-sm
+            px-5 py-1.5 rounded-lg font-departure text-sm
             bg-cream/10 hover:bg-cream/20
             border border-cream/30 hover:border-cream/50
             text-cream
             transition-all duration-300
             disabled:opacity-50 disabled:cursor-not-allowed
-            backdrop-blur-sm
           "
         >
           {mode === 'text' ? 'Image' : 'Text'}
@@ -86,7 +85,7 @@ export default function InputArea({ onSubmit, isLoading }: InputAreaProps) {
                 disabled={isLoading}
                 placeholder="What do you want to listen to?"
                 className={`
-                  w-full min-h-[108px] sm:min-h-[120px] p-4 sm:p-5
+                  w-full min-h-[92px] sm:min-h-[96px] p-3 sm:p-4
                   bg-cream-transparent glass-effect
                   text-black placeholder-gray-600
                   border border-cream/20 rounded-xl
@@ -94,9 +93,9 @@ export default function InputArea({ onSubmit, isLoading }: InputAreaProps) {
                   focus:border-cream/40 focus:bg-cream/90
                   transition-all duration-300 ease-in-out
                   disabled:opacity-50 disabled:cursor-not-allowed
-                  font-departure text-base leading-relaxed sm:text-lg
+                  font-departure text-base leading-snug sm:text-lg
                 `}
-                rows={4}
+                rows={3}
               />
               
               {/* Send */}
@@ -104,15 +103,14 @@ export default function InputArea({ onSubmit, isLoading }: InputAreaProps) {
                 type="submit"
                 disabled={!textInput.trim() || isLoading}
                 className={`
-                  absolute bottom-4 right-4
-                  px-6 py-2
+                  absolute bottom-3 right-3
+                  px-5 py-1.5
                   bg-cream/20 hover:bg-cream/5
                   border border-cream/30 hover:border-cream/80
                   text-pure-black text-sm font-departure
                   rounded-md
                   transition-all duration-200
                   disabled:opacity-30 disabled:cursor-not-allowed
-                  backdrop-blur-sm
                 `}
               >
                 {isLoading ? '...' : 'Send'}
@@ -141,19 +139,18 @@ export default function InputArea({ onSubmit, isLoading }: InputAreaProps) {
             />
 
             {selectedImage && (
-              <div className="flex justify-end mt-3">
+              <div className="mt-2 flex justify-end">
                 <button
                   type="submit"
                   disabled={isLoading}
                   className={`
-                    px-5 py-2
+                    px-4 py-1.5
                     bg-cream/10 hover:bg-cream/20
                     border border-cream/30 hover:border-cream/50
-                    text-cream font-departure
+                    text-cream font-departure text-sm
                     rounded-md
                     transition-all duration-200
                     disabled:opacity-30 disabled:cursor-not-allowed
-                    backdrop-blur-sm
                   `}
                 >
                   {isLoading ? 'Analyzing...' : 'Get recommendations'}

@@ -53,7 +53,7 @@ export default function ImageUploadArea({
           <img
             src={imagePreview}
             alt="Selected"
-            className="w-full max-h-40 object-contain rounded-lg border border-cream/20"
+            className="w-full max-h-32 object-contain rounded-lg border border-cream/20"
           />
           <button
             onClick={onClearImage}
@@ -80,7 +80,7 @@ export default function ImageUploadArea({
     <div className="fade-in">
       <div
         className={`
-          image-drop-zone w-full rounded-xl px-5 py-6 sm:py-7 text-center cursor-pointer
+          image-drop-zone w-full rounded-xl px-4 py-4 sm:py-5 text-center cursor-pointer
           bg-cream/5 hover:bg-cream/10
           transition-all duration-300
           ${isDragOver ? 'dragover' : ''}
@@ -91,19 +91,19 @@ export default function ImageUploadArea({
         onDrop={handleDrop}
         onClick={!isLoading ? onTriggerFileSelect : undefined}
       >
-        <div className="space-y-3">
-          <div className="font-eb-garamond text-3xl leading-none text-cream/50">
+        <div className="space-y-2">
+          <div className="font-eb-garamond text-2xl leading-none text-cream/45">
             +
           </div>
           
-          <div className="font-eb-garamond text-base text-cream sm:text-lg">
+          <div className="font-eb-garamond text-sm text-cream sm:text-base">
             {isDragOver 
               ? 'Drop to upload' 
               : 'Click or drag an image here'
             }
           </div>
           
-          <div className="font-eb-garamond text-cream/65 space-y-1 text-sm leading-snug">
+          <div className="font-eb-garamond text-cream/55 space-y-0.5 text-xs leading-snug">
             <p>JPG or PNG</p>
             <p>We read the mood of your image and suggest music to match.</p>
           </div>

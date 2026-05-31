@@ -108,7 +108,7 @@ function EdgeTrees({ mirror }: { mirror?: boolean }) {
 
   return (
     <svg
-      className="absolute inset-0 h-full w-full mix-blend-multiply"
+      className="absolute inset-0 h-full w-full mix-blend-soft-light"
       viewBox="-42 0 198 800"
       preserveAspectRatio="xMinYMax meet"
       overflow="visible"
@@ -164,7 +164,7 @@ function EdgeTrees({ mirror }: { mirror?: boolean }) {
       />
 
       <g
-        opacity={0.72}
+        opacity={0.48}
         filter={`url(#${uid}-paper)`}
       >
         {trees.map((t, i) => (
@@ -178,8 +178,8 @@ function EdgeTrees({ mirror }: { mirror?: boolean }) {
         ))}
       </g>
 
-      {/* Unfiltered duplicate at very low opacity for extra bleed into background */}
-      <g opacity={0.18} className="mix-blend-soft-light">
+      {/* Ghost bleed */}
+      <g opacity={0.1} className="mix-blend-soft-light">
         {trees.map((t, i) => (
           <g key={`ghost-${i}`}>
             {t.canopy.map((c, j) => (
@@ -215,7 +215,7 @@ export default function ForestEdges() {
         aria-hidden
       >
         <div
-          className="absolute inset-y-0 left-0 w-[min(16vw,100px)] md:w-[min(20vw,128px)] bg-gradient-to-r from-[#964B00]/22 to-transparent"
+          className="absolute inset-y-0 left-0 w-[min(16vw,100px)] md:w-[min(20vw,128px)] bg-gradient-to-r from-[#964B00]/8 to-transparent"
           style={{ maskImage: stripMask, WebkitMaskImage: stripMask }}
         />
         <EdgeTrees />
@@ -226,7 +226,7 @@ export default function ForestEdges() {
         aria-hidden
       >
         <div
-          className="absolute inset-y-0 right-0 w-[min(16vw,100px)] md:w-[min(20vw,128px)] bg-gradient-to-l from-[#964B00]/22 to-transparent"
+          className="absolute inset-y-0 right-0 w-[min(16vw,100px)] md:w-[min(20vw,128px)] bg-gradient-to-l from-[#964B00]/8 to-transparent"
           style={{ maskImage: stripMaskR, WebkitMaskImage: stripMaskR }}
         />
         <EdgeTrees mirror />
